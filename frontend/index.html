@@ -10,7 +10,15 @@
 </head>
 <body>
     <div class="app">
-        <!-- Sidebar -->
+        <header class="app-header">
+            <div>
+                <h1 class="header-title" id="page-title">Projet Safran</h1>
+                <p style="font-size: 12px; color: #6b7280; margin-top: 2px;" id="page-description">
+                    Importez vos fichiers pour commencer
+                </p>
+            </div>
+        </header>
+
         <aside class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
@@ -26,7 +34,6 @@
                     <div class="nav-item active" data-step="1">
                         <span class="nav-icon">📁</span>
                         <span>Import</span>
-                        <span class="nav-badge" id="nav-files-count"></span>
                     </div>
                     <div class="nav-item" data-step="2">
                         <span class="nav-icon">🔍</span>
@@ -34,7 +41,7 @@
                     </div>
                     <div class="nav-item" data-step="3">
                         <span class="nav-icon">⚙️</span>
-                        <span>Traitement</span>
+                        <span>Options</span>
                     </div>
                     <div class="nav-item" data-step="4">
                         <span class="nav-icon">📦</span>
@@ -51,19 +58,9 @@
             </div>
         </aside>
 
-        <!-- Main Content -->
         <main class="main">
-            <!-- Header -->
-            <header class="main-header">
-                <h1 id="page-title">Importer vos fichiers</h1>
-                <p id="page-description">Glissez-déposez vos fichiers Python ou un ZIP</p>
-            </header>
-
-            <!-- Content Grid -->
             <div class="content-grid">
-                <!-- Left Panel -->
                 <div class="panel panel-left">
-                    <!-- Upload Card -->
                     <div class="card card-upload" id="card-upload">
                         <div class="upload-zone" id="upload-zone">
                             <input type="file" id="file-input" multiple accept=".py,.zip" hidden>
@@ -85,46 +82,56 @@
                         </div>
                     </div>
 
-                    <!-- Files List Card -->
-                    <div class="card card-files" id="card-files" hidden>
+                    <div class="card card-files" id="card-files">
                         <div class="card-header">
-                            <h3>Fichiers importés</h3>
-                            <button class="btn-text" id="btn-clear">Tout effacer</button>
+                            <h3>Fichiers importes</h3>
+                            <button class="btn-text" id="btn-clear">Effacer</button>
                         </div>
                         <div class="files-list" id="files-list"></div>
                     </div>
 
-                    <!-- Options Card -->
-                    <div class="card card-options" id="card-options" hidden>
+                    <div class="card card-options" id="card-options">
                         <div class="card-header">
                             <h3>Options de traitement</h3>
                         </div>
                         <div class="options-list">
                             <label class="option-item">
-                                <input type="checkbox" checked disabled>
+                                <input type="checkbox" id="opt-pep8" checked>
                                 <div class="option-content">
                                     <span class="option-title">Correction PEP8</span>
-                                    <span class="option-desc">Formatage automatique du code</span>
+                                    <span class="option-desc">Formatage automatique autopep8</span>
                                 </div>
-                                <span class="option-tag">Auto</span>
                             </label>
                             <label class="option-item">
                                 <input type="checkbox" id="opt-docstrings" checked>
                                 <div class="option-content">
-                                    <span class="option-title">Génération Docstrings</span>
-                                    <span class="option-desc">Documentation IA automatique</span>
+                                    <span class="option-title">Docstrings IA</span>
+                                    <span class="option-desc">Generation automatique via LLM</span>
+                                </div>
+                            </label>
+                            <label class="option-item">
+                                <input type="checkbox" id="opt-profiling">
+                                <div class="option-content">
+                                    <span class="option-title">Profiling (cProfile)</span>
+                                    <span class="option-desc">Analyse des temps d'execution</span>
+                                </div>
+                            </label>
+                            <label class="option-item">
+                                <input type="checkbox" id="opt-graph" checked>
+                                <div class="option-content">
+                                    <span class="option-title">Graphe de dependances</span>
+                                    <span class="option-desc">Visualisation interactive D3.js</span>
                                 </div>
                             </label>
                         </div>
                         <button class="btn-primary btn-process" id="btn-process">
-                            <span>🚀 Lancer le traitement</span>
+                            🚀 Lancer le traitement
                         </button>
                     </div>
 
-                    <!-- Results Card -->
                     <div class="card card-results" id="card-results" hidden>
                         <div class="card-header">
-                            <h3>Résultats</h3>
+                            <h3>Resultats</h3>
                         </div>
                         <div class="results-summary">
                             <div class="result-stat">
@@ -133,30 +140,25 @@
                             </div>
                             <div class="result-stat result-stat-main">
                                 <span class="result-value" id="result-improvement">+0</span>
-                                <span class="result-label">Amélioration moy.</span>
-                            </div>
-                            <div class="result-stat">
-                                <span class="result-value" id="result-docstrings">0</span>
-                                <span class="result-label">Docstrings</span>
+                                <span class="result-label">Amelioration</span>
                             </div>
                         </div>
                         <div class="results-actions">
                             <button class="btn-primary btn-download" id="btn-download">
-                                📦 Télécharger le ZIP
+                                📦 Telecharger ZIP
                             </button>
                             <button class="btn-secondary" id="btn-report">
                                 📊 Rapport global
+                            </button>
+                            <button class="btn-secondary" id="btn-project-graph">
+                                🔗 Graphe projet
                             </button>
                             <button class="btn-text" id="btn-restart">
                                 🔄 Nouveau traitement
                             </button>
                         </div>
                     </div>
-                </div>
 
-                <!-- Right Panel -->
-                <div class="panel panel-right">
-                    <!-- Stats Card -->
                     <div class="card card-stats" id="card-stats">
                         <div class="stats-header">
                             <div class="score-ring">
@@ -186,42 +188,58 @@
                             </div>
                             <div class="stat-box">
                                 <span class="stat-value" id="stat-issues">0</span>
-                                <span class="stat-label">Problèmes</span>
+                                <span class="stat-label">Problemes</span>
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- Preview Card -->
-                    <div class="card card-preview" id="card-preview" hidden>
+                <div class="panel panel-right">
+                    <div class="card card-preview" id="card-preview">
                         <div class="card-header">
-                            <h3>Prévisualisation</h3>
-                            <select class="file-selector" id="file-selector"></select>
+                            <div style="display:flex; align-items:center; gap:10px; flex:1;">
+                                <h3>Fichier</h3>
+                                <select class="file-selector" id="file-selector"></select>
+                            </div>
+                            <div class="header-actions">
+                                <button class="btn-text" id="btn-download-file" title="Télécharger ce fichier">
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <div class="preview-tabs">
-                            <button class="preview-tab active" data-tab="compare">Comparaison</button>
+                            <button class="preview-tab active" data-tab="code">Code</button>
                             <button class="preview-tab" data-tab="report">Rapport</button>
+                            <button class="preview-tab" data-tab="graph">Graphe</button>
                         </div>
                         <div class="preview-content">
-                            <!-- Compare View -->
-                            <div class="preview-compare" id="preview-compare">
-                                <div class="code-panel">
-                                    <div class="code-header">
-                                        <span>Original</span>
-                                        <span class="code-score" id="score-before">--</span>
+                            <div class="preview-code" id="preview-code">
+                                <div class="code-compare">
+                                    <div class="code-panel">
+                                        <div class="code-header">
+                                            <span>Original</span>
+                                            <span class="code-score" id="score-before">--</span>
+                                        </div>
+                                        <pre class="code-content" id="code-original"></pre>
                                     </div>
-                                    <pre class="code-content" id="code-original"></pre>
-                                </div>
-                                <div class="code-panel">
-                                    <div class="code-header">
-                                        <span>Corrigé</span>
-                                        <span class="code-score success" id="score-after">--</span>
+                                    <div class="code-panel">
+                                        <div class="code-header">
+                                            <span>Corrige</span>
+                                            <span class="code-score success" id="score-after">--</span>
+                                        </div>
+                                        <pre class="code-content" id="code-corrected"></pre>
                                     </div>
-                                    <pre class="code-content" id="code-corrected"></pre>
                                 </div>
                             </div>
-                            <!-- Report View -->
-                            <div class="preview-report" id="preview-report" hidden>
-                                <iframe id="report-iframe" class="report-frame"></iframe>
+                            <div class="preview-iframe" id="preview-report" hidden>
+                                <iframe id="iframe-report" class="preview-frame"></iframe>
+                            </div>
+                            <div class="preview-iframe" id="preview-graph" hidden>
+                                <iframe id="iframe-graph" class="preview-frame"></iframe>
                             </div>
                         </div>
                     </div>
@@ -230,7 +248,6 @@
         </main>
     </div>
 
-    <!-- Loading Overlay -->
     <div class="overlay" id="overlay" hidden>
         <div class="loader-card">
             <div class="loader-spinner"></div>
@@ -239,7 +256,6 @@
         </div>
     </div>
 
-    <!-- Modal -->
     <div class="modal" id="modal" hidden>
         <div class="modal-backdrop"></div>
         <div class="modal-content">

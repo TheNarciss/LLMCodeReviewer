@@ -1,39 +1,25 @@
 /**
  * AgentIA v2 - Code Standardizer
- * Frontend Application - Improved
+ * Frontend simplifie
  */
-
-// ============================================
-// State
-// ============================================
 
 const state = {
     jobId: null,
     files: [],
     analysis: null,
     processed: null,
-    selectedFile: null
+    selectedFile: null,
+    currentTab: 'code'
 };
 
-// ============================================
-// DOM
-// ============================================
-
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
 
 const el = {
-    // Status
     llmStatus: $('#llm-status'),
-    
-    // Header
     pageTitle: $('#page-title'),
     pageDescription: $('#page-description'),
     
-    // Nav
-    navFilesCount: $('#nav-files-count'),
-    
-    // Upload
     uploadZone: $('#upload-zone'),
     fileInput: $('#file-input'),
     cardUpload: $('#card-upload'),
@@ -41,12 +27,13 @@ const el = {
     filesList: $('#files-list'),
     btnClear: $('#btn-clear'),
     
-    // Options
     cardOptions: $('#card-options'),
+    optPep8: $('#opt-pep8'),
     optDocstrings: $('#opt-docstrings'),
+    optProfiling: $('#opt-profiling'),
+    optGraph: $('#opt-graph'),
     btnProcess: $('#btn-process'),
     
-    // Stats
     cardStats: $('#card-stats'),
     scoreValue: $('#score-value'),
     scoreCircle: $('#score-circle'),
@@ -56,27 +43,27 @@ const el = {
     statClasses: $('#stat-classes'),
     statIssues: $('#stat-issues'),
     
-    // Preview
     cardPreview: $('#card-preview'),
     fileSelector: $('#file-selector'),
-    previewCompare: $('#preview-compare'),
+    previewCode: $('#preview-code'),
     previewReport: $('#preview-report'),
+    previewGraph: $('#preview-graph'),
     codeOriginal: $('#code-original'),
     codeCorrected: $('#code-corrected'),
     scoreBefore: $('#score-before'),
     scoreAfter: $('#score-after'),
-    reportIframe: $('#report-iframe'),
+    iframeReport: $('#iframe-report'),
+    iframeGraph: $('#iframe-graph'),
     
-    // Results
     cardResults: $('#card-results'),
     resultFiles: $('#result-files'),
     resultImprovement: $('#result-improvement'),
-    resultDocstrings: $('#result-docstrings'),
     btnDownload: $('#btn-download'),
     btnReport: $('#btn-report'),
+    btnProjectGraph: $('#btn-project-graph'),
     btnRestart: $('#btn-restart'),
+    btnDownloadFile: $('#btn-download-file'),
     
-    // Overlay & Modal
     overlay: $('#overlay'),
     loaderText: $('#loader-text'),
     loaderHint: $('#loader-hint'),
@@ -85,10 +72,7 @@ const el = {
     modalIframe: $('#modal-iframe')
 };
 
-// ============================================
 // API
-// ============================================
-
 const api = {
     async status() {
         const res = await fetch('/api/status');
@@ -103,77 +87,64 @@ const api = {
     },
     
     async analyze(jobId) {
-        const res = await fetch(`/api/analyze/${jobId}`);
+        const res = await fetch('/api/analyze/' + jobId);
         return res.json();
     },
     
-    async process(jobId, addDocstrings) {
-        const res = await fetch(`/api/process/${jobId}?add_docstrings=${addDocstrings}`, { method: 'POST' });
+    async process(jobId, options) {
+        const params = new URLSearchParams({
+            pep8: options.pep8,
+            docstrings: options.docstrings,
+            profiling: options.profiling,
+            dependency_graph: options.graph
+        });
+        const res = await fetch('/api/process/' + jobId + '?' + params, { method: 'POST' });
         return res.json();
     },
     
     async preview(jobId, filename) {
-        const res = await fetch(`/api/preview/${jobId}/${filename}`);
+        const res = await fetch('/api/preview/' + jobId + '/' + filename);
         return res.json();
     },
     
-    reportUrl(jobId, filename = null) {
-        return filename 
-            ? `/api/report/${jobId}/${filename}`
-            : `/api/report/${jobId}`;
-    },
-    
-    downloadUrl(jobId) {
-        return `/api/download/${jobId}`;
-    }
+    reportUrl: (jobId, filename) => filename ? '/api/report/' + jobId + '/' + filename : '/api/report/' + jobId,
+    graphUrl: (jobId, filename) => filename ? '/api/graph/' + jobId + '/' + filename : '/api/graph/' + jobId,
+    downloadUrl: jobId => '/api/download/' + jobId,
+    downloadFile: (jobId, filename) => '/api/download/' + jobId + '/' + filename
 };
 
-// ============================================
-// Utilities
-// ============================================
-
-function truncateCode(code, maxLines = 25) {
+// Utils
+function truncateCode(code, maxLines = 30) {
     if (!code) return '';
     const lines = code.split('\n');
     if (lines.length <= maxLines) return code;
     
-    const start = lines.slice(0, 12).join('\n');
-    const end = lines.slice(-10).join('\n');
-    const hidden = lines.length - 22;
-    
-    return `${start}\n\n    /* ... ${hidden} lignes masquées ... */\n\n${end}`;
+    const start = lines.slice(0, 15).join('\n');
+    const end = lines.slice(-12).join('\n');
+    return start + '\n\n    /* ... ' + (lines.length - 27) + ' lignes masquees ... */\n\n' + end;
 }
 
 function updateScoreRing(score) {
-    const circumference = 283; // 2 * PI * 45
-    const offset = circumference - (score / 100) * circumference;
-    el.scoreCircle.style.strokeDashoffset = offset;
+    el.scoreCircle.style.strokeDashoffset = 283 - (score / 100) * 283;
 }
 
 function getScoreStatus(score) {
     if (score >= 80) return 'Excellent';
     if (score >= 60) return 'Acceptable';
-    return 'À améliorer';
+    return 'A ameliorer';
 }
 
-function updateNav(step, completed = false) {
-    $$('.nav-item').forEach((item, index) => {
+function updateNav(step) {
+    $$('.nav-item').forEach((item, i) => {
         item.classList.remove('active', 'completed');
-        if (index + 1 === step) {
-            item.classList.add('active');
-        } else if (index + 1 < step || completed) {
-            item.classList.add('completed');
-        }
+        if (i + 1 === step) item.classList.add('active');
+        else if (i + 1 < step) item.classList.add('completed');
     });
 }
 
-// ============================================
-// UI Functions
-// ============================================
-
-function showLoading(text, hint = '') {
-    el.loaderText.textContent = text;
-    el.loaderHint.textContent = hint;
+function showLoading(text, hint) {
+    el.loaderText.textContent = text || 'Chargement...';
+    el.loaderHint.textContent = hint || '';
     el.overlay.hidden = false;
 }
 
@@ -181,151 +152,104 @@ function hideLoading() {
     el.overlay.hidden = true;
 }
 
-function updateHeader(title, description) {
-    el.pageTitle.textContent = title;
-    el.pageDescription.textContent = description;
-}
-
-function renderFilesList(files, processed = null) {
+function renderFilesList(files, processed) {
     const processedMap = new Map();
-    if (processed) {
-        processed.forEach(p => processedMap.set(p.file, p));
-    }
+    if (processed) processed.forEach(p => processedMap.set(p.file, p));
     
-    el.filesList.innerHTML = files.map((file, index) => {
+    el.filesList.innerHTML = files.map((file, i) => {
         const p = processedMap.get(file.file || file);
         const filename = file.file || file;
-        const score = file.score || 0;
         
         let scoreHtml = '';
         if (p && p.score_before !== undefined) {
-            const improvement = p.score_after - p.score_before;
-            const impClass = improvement > 0 ? 'improved' : '';
-            scoreHtml = `
-                <div class="file-score ${impClass}">
-                    <span>${p.score_before}</span>
-                    <span class="score-arrow">→</span>
-                    <span>${p.score_after}</span>
-                </div>
-            `;
-        } else if (score) {
-            scoreHtml = `<div class="file-score">${score}</div>`;
+            const cls = (p.score_after - p.score_before) > 0 ? 'improved' : '';
+            scoreHtml = '<div class="file-score ' + cls + '">' + p.score_before + ' → ' + p.score_after + '</div>';
+        } else if (file.score) {
+            scoreHtml = '<div class="file-score">' + file.score + '</div>';
         }
         
-        return `
-            <div class="file-item ${index === 0 ? 'active' : ''}" data-file="${filename}">
-                <div class="file-icon">📄</div>
-                <div class="file-info">
-                    <div class="file-name">${filename}</div>
-                    <div class="file-meta">${file.lines || ''} ${file.lines ? 'lignes' : ''}</div>
-                </div>
-                ${scoreHtml}
-            </div>
-        `;
+        return '<div class="file-item ' + (i === 0 ? 'active' : '') + '" data-file="' + filename + '">' +
+            '<div class="file-icon">📄</div>' +
+            '<div class="file-info"><div class="file-name">' + filename + '</div></div>' +
+            scoreHtml + '</div>';
     }).join('');
     
-    // Add click handlers
     el.filesList.querySelectorAll('.file-item').forEach(item => {
         item.addEventListener('click', () => selectFile(item.dataset.file));
     });
     
-    // Update selector
     el.fileSelector.innerHTML = files.map(f => {
-        const filename = f.file || f;
-        return `<option value="${filename}">${filename}</option>`;
+        const fn = f.file || f;
+        return '<option value="' + fn + '">' + fn + '</option>';
     }).join('');
 }
 
 function renderStats(data) {
-    let totalFunctions = 0;
-    let totalClasses = 0;
-    let totalIssues = 0;
-    
+    let funcs = 0, classes = 0, issues = 0;
     data.files.forEach(f => {
-        totalFunctions += f.functions.length;
-        totalClasses += f.classes.length;
-        totalIssues += f.issues;
+        funcs += f.functions.length;
+        classes += f.classes.length;
+        issues += f.issues;
     });
     
     el.scoreValue.textContent = data.average_score;
     updateScoreRing(data.average_score);
     el.scoreStatus.textContent = getScoreStatus(data.average_score);
-    
     el.statFiles.textContent = data.total_files;
-    el.statFunctions.textContent = totalFunctions;
-    el.statClasses.textContent = totalClasses;
-    el.statIssues.textContent = totalIssues;
+    el.statFunctions.textContent = funcs;
+    el.statClasses.textContent = classes;
+    el.statIssues.textContent = issues;
 }
 
 function renderResults(data) {
-    const filesCount = data.processed.length;
-    const docstringsCount = data.processed.filter(p => p.has_docstrings).length;
-    
-    // Calculate average improvement
-    let totalImprovement = 0;
+    const count = data.processed.length;
+    let totalImp = 0;
     data.processed.forEach(p => {
-        if (p.score_before !== undefined && p.score_after !== undefined) {
-            totalImprovement += (p.score_after - p.score_before);
-        }
+        if (p.score_before !== undefined) totalImp += (p.score_after - p.score_before);
     });
-    const avgImprovement = Math.round(totalImprovement / filesCount);
     
-    el.resultFiles.textContent = filesCount;
-    el.resultImprovement.textContent = avgImprovement >= 0 ? `+${avgImprovement}` : avgImprovement;
-    el.resultDocstrings.textContent = docstringsCount;
+    el.resultFiles.textContent = count;
+    el.resultImprovement.textContent = (totalImp >= 0 ? '+' : '') + Math.round(totalImp / count);
 }
 
 async function selectFile(filename) {
     state.selectedFile = filename;
     
-    // Update active state
+    // Mise à jour visuelle liste
     el.filesList.querySelectorAll('.file-item').forEach(item => {
         item.classList.toggle('active', item.dataset.file === filename);
     });
-    
-    // Update selector
     el.fileSelector.value = filename;
     
-    // Load preview
+    // Configuration des boutons d'action (Nouveau)
+    el.btnDownloadFile.onclick = () => {
+        window.location.href = api.downloadFile(state.jobId, filename);
+    };
+    
+    // Chargement contenu
     try {
         const preview = await api.preview(state.jobId, filename);
         
-        // Truncate code for preview
-        el.codeOriginal.textContent = truncateCode(preview.original, 25);
-        el.codeCorrected.textContent = truncateCode(preview.corrected, 25) || '(En attente de traitement)';
+        el.codeOriginal.textContent = truncateCode(preview.original);
+        el.codeCorrected.textContent = truncateCode(preview.corrected) || '(En attente)';
         
-        // Update scores if processed
-        if (state.processed) {
-            const fileData = state.processed.processed.find(p => p.file === filename);
-            if (fileData && fileData.score_before !== undefined) {
-                el.scoreBefore.textContent = fileData.score_before;
-                el.scoreAfter.textContent = fileData.score_after;
-            }
-        } else if (state.analysis) {
-            const fileData = state.analysis.files.find(f => f.file === filename);
-            if (fileData) {
-                el.scoreBefore.textContent = fileData.score;
-                el.scoreAfter.textContent = '--';
-            }
-        }
+        if (preview.score_before !== null) el.scoreBefore.textContent = preview.score_before;
+        if (preview.score_after !== null) el.scoreAfter.textContent = preview.score_after;
         
-        // Load report if available
-        if (preview.corrected) {
-            el.reportIframe.src = api.reportUrl(state.jobId, filename);
-        }
-        
+        el.iframeReport.src = api.reportUrl(state.jobId, filename);
+        el.iframeGraph.src = api.graphUrl(state.jobId, filename);
     } catch (err) {
         console.error('Preview error:', err);
     }
 }
-
-function switchPreviewTab(tab) {
-    $$('.preview-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === tab);
-    });
+function switchTab(tab) {
+    state.currentTab = tab;
     
-    el.previewCompare.hidden = tab !== 'compare';
+    $$('.preview-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    
+    el.previewCode.hidden = tab !== 'code';
     el.previewReport.hidden = tab !== 'report';
+    el.previewGraph.hidden = tab !== 'graph';
 }
 
 function openModal(url) {
@@ -345,7 +269,6 @@ function reset() {
     state.processed = null;
     state.selectedFile = null;
     
-    // Reset UI
     el.cardFiles.hidden = true;
     el.cardOptions.hidden = true;
     el.cardPreview.hidden = true;
@@ -366,59 +289,42 @@ function reset() {
     el.statFunctions.textContent = '0';
     el.statClasses.textContent = '0';
     el.statIssues.textContent = '0';
-    
-    el.navFilesCount.textContent = '';
     el.fileInput.value = '';
     
-    updateHeader('Importer vos fichiers', 'Glissez-déposez vos fichiers Python ou un ZIP');
+    el.pageTitle.textContent = 'Importer vos fichiers';
+    el.pageDescription.textContent = 'Glissez-deposez vos fichiers Python ou un ZIP';
     updateNav(1);
+    switchTab('code');
 }
 
-// ============================================
-// Handlers
-// ============================================
-
 async function handleFiles(fileList) {
-    const files = Array.from(fileList).filter(f => 
-        f.name.endsWith('.py') || f.name.endsWith('.zip')
-    );
+    const files = Array.from(fileList).filter(f => f.name.endsWith('.py') || f.name.endsWith('.zip'));
     
-    if (files.length === 0) {
-        alert('Sélectionnez des fichiers Python (.py) ou un ZIP.');
+    if (!files.length) {
+        alert('Selectionnez des fichiers Python (.py) ou un ZIP.');
         return;
     }
     
     try {
-        showLoading('Upload des fichiers...', 'Analyse en préparation');
-        
+        showLoading('Upload des fichiers...', 'Preparation');
         const result = await api.upload(files);
         state.jobId = result.job_id;
-        state.files = result.files;
         
-        el.navFilesCount.textContent = result.count;
-        
-        showLoading('Analyse en cours...', `${result.count} fichier(s) détecté(s)`);
-        
+        showLoading('Analyse en cours...', result.count + ' fichier(s)');
         const analysis = await api.analyze(state.jobId);
         state.analysis = analysis;
         
-        // Update UI
         renderFilesList(analysis.files);
         renderStats(analysis);
         
         el.cardUpload.hidden = true;
-        el.cardFiles.hidden = false;
-        el.cardOptions.hidden = false;
         el.cardPreview.hidden = false;
         
-        updateHeader('Analyse complète', `${analysis.total_files} fichier(s) analysé(s) - Score moyen: ${analysis.average_score}/100`);
+        el.pageTitle.textContent = 'Analyse complete';
+        el.pageDescription.textContent = analysis.total_files + ' fichier(s) - Score: ' + analysis.average_score + '/100';
         updateNav(2);
         
-        // Select first file
-        if (analysis.files.length > 0) {
-            selectFile(analysis.files[0].file);
-        }
-        
+        if (analysis.files.length > 0) selectFile(analysis.files[0].file);
     } catch (err) {
         console.error(err);
         alert('Erreur: ' + err.message);
@@ -430,34 +336,37 @@ async function handleFiles(fileList) {
 async function handleProcess() {
     if (!state.jobId) return;
     
-    const addDocstrings = el.optDocstrings.checked;
+    const options = {
+        pep8: el.optPep8.checked,
+        docstrings: el.optDocstrings.checked,
+        profiling: el.optProfiling.checked,
+        graph: el.optGraph.checked
+    };
+    
+    const hints = [];
+    if (options.pep8) hints.push('PEP8');
+    if (options.docstrings) hints.push('Docstrings');
+    if (options.profiling) hints.push('Profiling');
+    if (options.graph) hints.push('Graphes');
     
     try {
         el.btnProcess.disabled = true;
+        showLoading('Traitement en cours...', hints.join(' + '));
         
-        const hint = addDocstrings 
-            ? 'Correction PEP8 + Génération des docstrings IA'
-            : 'Correction PEP8';
-        showLoading('Traitement en cours...', hint);
-        
-        const result = await api.process(state.jobId, addDocstrings);
+        const result = await api.process(state.jobId, options);
         state.processed = result;
         
-        // Update UI
         renderFilesList(state.analysis.files, result.processed);
         renderResults(result);
         
         el.cardOptions.hidden = true;
         el.cardResults.hidden = false;
         
-        updateHeader('Traitement terminé', `${result.count} fichier(s) traité(s) avec succès`);
-        updateNav(4, true);
+        el.pageTitle.textContent = 'Traitement termine';
+        el.pageDescription.textContent = result.count + ' fichier(s) traite(s)';
+        updateNav(4);
         
-        // Refresh preview
-        if (state.selectedFile) {
-            selectFile(state.selectedFile);
-        }
-        
+        if (state.selectedFile) selectFile(state.selectedFile);
     } catch (err) {
         console.error(err);
         alert('Erreur: ' + err.message);
@@ -467,83 +376,44 @@ async function handleProcess() {
     }
 }
 
-// ============================================
-// Init
-// ============================================
-
 async function init() {
-    // Check API status
     try {
         const status = await api.status();
         el.llmStatus.classList.add('connected');
-        
-        if (status.llm.backend === 'api') {
-            el.llmStatus.classList.add('api');
-            el.llmStatus.querySelector('.status-text').textContent = `API: ${status.llm.model}`;
-        } else {
-            el.llmStatus.querySelector('.status-text').textContent = `Ollama: ${status.llm.model}`;
-        }
-    } catch (err) {
-        el.llmStatus.querySelector('.status-text').textContent = 'Déconnecté';
+        el.llmStatus.querySelector('.status-text').textContent = 
+            status.llm.backend === 'api' ? 'API: ' + status.llm.model : 'Ollama: ' + status.llm.model;
+    } catch {
+        el.llmStatus.querySelector('.status-text').textContent = 'Deconnecte';
     }
     
-    // Upload events
+    // Upload
     el.uploadZone.addEventListener('click', () => el.fileInput.click());
-    
-    el.uploadZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        el.uploadZone.classList.add('dragover');
-    });
-    
-    el.uploadZone.addEventListener('dragleave', () => {
-        el.uploadZone.classList.remove('dragover');
-    });
-    
-    el.uploadZone.addEventListener('drop', (e) => {
+    el.uploadZone.addEventListener('dragover', e => { e.preventDefault(); el.uploadZone.classList.add('dragover'); });
+    el.uploadZone.addEventListener('dragleave', () => el.uploadZone.classList.remove('dragover'));
+    el.uploadZone.addEventListener('drop', e => {
         e.preventDefault();
         el.uploadZone.classList.remove('dragover');
         handleFiles(e.dataTransfer.files);
     });
-    
-    el.fileInput.addEventListener('change', (e) => {
-        handleFiles(e.target.files);
-    });
+    el.fileInput.addEventListener('change', e => handleFiles(e.target.files));
     
     // Buttons
     el.btnClear.addEventListener('click', reset);
     el.btnProcess.addEventListener('click', handleProcess);
-    
-    el.btnDownload.addEventListener('click', () => {
-        if (state.jobId) {
-            window.location.href = api.downloadUrl(state.jobId);
-        }
-    });
-    
-    el.btnReport.addEventListener('click', () => {
-        if (state.jobId) {
-            openModal(api.reportUrl(state.jobId));
-        }
-    });
-    
+    el.btnDownload.addEventListener('click', () => { if (state.jobId) window.location.href = api.downloadUrl(state.jobId); });
+    el.btnReport.addEventListener('click', () => { if (state.jobId) openModal(api.reportUrl(state.jobId)); });
+    el.btnProjectGraph.addEventListener('click', () => { if (state.jobId) openModal(api.graphUrl(state.jobId)); });
     el.btnRestart.addEventListener('click', reset);
     
-    // File selector
-    el.fileSelector.addEventListener('change', (e) => {
-        selectFile(e.target.value);
-    });
-    
-    // Preview tabs
-    $$('.preview-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchPreviewTab(tab.dataset.tab));
-    });
+    // Selector & Tabs
+    el.fileSelector.addEventListener('change', e => selectFile(e.target.value));
+    $$('.preview-tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
     
     // Modal
     el.modalClose.addEventListener('click', closeModal);
     $('.modal-backdrop').addEventListener('click', closeModal);
     
-    // Initialize nav
     updateNav(1);
 }
 
-// Start
 document.addEventListener('DOMContentLoaded', init);
