@@ -25,15 +25,23 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-body {
+html, body {
+    height: 100vh;       /* Force la hauteur exacte de l'écran */
+    width: 100vw;
+    overflow: hidden;    /* INTERDIT tout scroll global */
+    margin: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.5;
-    min-height: 100vh;
 }
 
-.app { display: flex; flex-direction: column; min-height: 100vh; }
+.app { 
+    display: flex; 
+    flex-direction: column; 
+    height: 100vh;      /* L'app prend tout l'écran */
+    overflow: hidden; 
+}
 
 /* App Header */
 .app-header {
@@ -148,30 +156,53 @@ body {
 /* Main */
 .main {
     flex: 1;
-    margin-left: 0;
     padding: 16px;
     min-height: 0;
+    overflow: hidden; /* Sécurité absolue anti-débordement */
+    display: flex;
+    flex-direction: column;
 }
 
-/* Grid */
 .content-grid {
     display: grid;
     grid-template-columns: 340px 1fr;
     gap: 16px;
     align-items: start;
-    height: calc(100vh - 100px);
+    height: 100%; /* Prend toute la hauteur disponible dans .main */
+    min-height: 0;
 }
-
 .panel { display: flex; flex-direction: column; gap: 12px; }
 .panel-left { 
     order: 1; 
-    max-height: calc(100vh - 100px);
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    min-height: 0;
+    gap: 12px;
+    
+    /* FIX: On utilise 100% de la hauteur de la grille, pas de l'écran */
+    height: 100%;       
+    min-height: 0;      
+    
+    /* FIX: On active le scroll ici */
+    overflow-y: auto;   
+    
+    /* FIX: On ajoute une marge interne en bas pour que la dernière carte ne soit pas coupée */
+    padding-bottom: 20px; 
+    padding-right: 4px; /* Pour éviter que la scrollbar ne cache le contenu */
 }
-.panel-right { order: 2; height: 100%; }
+/* Optionnel : Style de la scrollbar pour qu'elle soit plus discrète */
+.panel-left::-webkit-scrollbar {
+    width: 0px;
+}
+.panel-left::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 4px;
+}
+.panel-right { 
+    order: 2; 
+    height: 100%; 
+    min-height: 0;
+    overflow: hidden; /* Le panel droit ne doit jamais scroller globalement */
+}
 
 /* Cards */
 .card {
@@ -179,28 +210,62 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    overflow: hidden;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    /* FIX: On retire max-height: 100vh qui causait le débordement */
+    flex-shrink: 0; /* Empêche la carte de s'écraser */
 }
 
+/* Ces classes ne doivent plus avoir de hauteur forcée */
 .card-upload { flex-shrink: 0; }
-.card-files { flex: 1; min-height: 0; }
 .card-options { flex-shrink: 0; }
 .card-results { flex-shrink: 0; }
 .card-stats { flex-shrink: 0; }
-.card-preview { flex: 1; min-height: 0; }
+/* --- STYLE DES TITRES DE CARTE (FINAL) --- */
 
 .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-card);
     flex-shrink: 0;
+    min-height: 48px;
+    
+    /* --- LE FIX POUR L'ARRONDI --- */
+    /* On force le header à suivre l'arrondi de la carte (var(--radius)) */
+    /* Le calcul -1px permet d'éviter un petit trait blanc moche entre la bordure et le fond */
+    border-top-left-radius: calc(var(--radius) - 1px);
+    border-top-right-radius: calc(var(--radius) - 1px);
 }
 
-.card-header h3 { font-size: 13px; font-weight: 600; }
+.card-header h3 {
+    margin: 0;
+    padding: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    line-height: 1.5;
+}
+
+.card-header select.file-selector {
+    margin-left: 10px;
+    height: 24px;
+    font-size: 11px;
+    padding: 0 4px;
+}
+
+
+
+.card-files { 
+    flex: 1; 
+    min-height: 0; 
+    display: flex; 
+    flex-direction: column; 
+}
 
 /* * ==========================================
  * IMPORT SECTION - STYLES CORRIGÉS
@@ -410,9 +475,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: clamp(2px, 0.5vw, 3px);
-    min-height: 0;
-    overflow-y: auto;
-    max-height: 70vh;
+    /* On enlève max-height et overflow car c'est le parent (.panel-left) qui gère ça mnt */
 }
 
 .option-item {
@@ -687,14 +750,13 @@ body {
 }
 
 /* Preview */
-.card-preview { 
-    min-height: 450px; 
-    display: flex; 
+.card-preview {
+    display: flex;
     flex-direction: column;
-    max-width: 100%;
-    height: 100%;
+    height: 100%;       /* Prend 100% du panel droit */
+    min-height: 0;     
+    overflow: hidden;   /* Important */
 }
-
 .file-selector {
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -708,7 +770,7 @@ body {
     display: flex;
     padding: 0 14px;
     border-bottom: 1px solid var(--border-light);
-    overflow-x: auto;
+    overflow-x: false;
 }
 
 .preview-tab {
@@ -727,20 +789,37 @@ body {
 .preview-tab:hover { color: var(--text); }
 .preview-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 
-.preview-content { flex: 1; display: flex; flex-direction: column; min-height: 350px; height: 100%; }
+.preview-content { 
+    flex: 1; 
+    display: flex; 
+    flex-direction: column; 
+    min-height: 0; 
+    overflow: hidden; /* Empêche le débordement des onglets */
+}
 
-.preview-code { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.preview-code { 
+    display: flex; 
+    flex-direction: column; 
+    height: 100%; 
+    max-height: 100vh; }
 
 .code-compare {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1px;
     background: var(--border);
-    flex: 1;
-    height: 100%;
+    flex: 1;            /* Prend tout l'espace restant sous les onglets */
+    height: 100%;      /* Permet aux enfants de scroller */
 }
 
-.code-panel { background: var(--bg-card); display: flex; flex-direction: column; height: 100%; max-height: 100%; min-height: 0; }
+.code-panel {
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;      
+    overflow: hidden;
+}
 
 .code-header {
     display: flex;
@@ -767,22 +846,19 @@ body {
 
 .code-content {
     flex: 1;
-    padding: 10px;
+    padding: 12px !important;
+    padding-bottom: 40px !important; /* Ajout d'espace en bas pour lire la dernière ligne */
     margin: 0;
-    font-family: 'SF Mono', Monaco, Consolas, monospace;
-    font-size: 10px;
+    font-family: 'SF Mono', Monaco, Consolas, monospace !important;
+    font-size: 11px !important;
     line-height: 1.5;
-    
-    /* GESTION DU SCROLL */
-    overflow-y: auto;
-    overflow-x: auto;
-    min-height: 0;
-    
-    white-space: pre-wrap;
+    overflow: auto !important; /* Le scroll se fait ICI */
+    white-space: pre;   
+    background: #ffffff !important;
 }
 .preview-iframe { flex: 1; display: flex; }
 
-.preview-frame { width: 100%; height: 100%; min-height: 380px; border: none; }
+.preview-frame { width: 100%; height: 100%; max-height: 100vh; border: none; }
 
 /* Overlay */
 .overlay {
@@ -903,4 +979,42 @@ body {
     background: var(--primary-light);
     color: var(--primary);
     border-color: var(--primary);
+}
+/* Forcer le style sur les blocs Prism */
+pre[class*="language-"], 
+code[class*="language-"] {
+    font-size: 10px !important; /* Taille d'origine */
+    font-family: 'SF Mono', Monaco, Consolas, monospace !important;
+    line-height: 1.5 !important;
+    margin: 0 !important;
+    padding: 10px !important; /* Retour de la marge interne */
+    background: #ffffff !important; /* Fond blanc propre */
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Ajustement des lignes de diff pour qu'elles prennent toute la largeur malgré le padding */
+
+
+.diff-removed {
+    background-color: #ffeef0 !important;
+    color: #b31d28 !important;
+}
+
+.diff-added {
+    background-color: #e6ffed !important;
+    color: #22863a !important;
+}
+
+/* On s'assure que le panel de code scrolle correctement sans déborder */
+.code-panel {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.code-content {
+    flex: 1;
+    overflow: auto !important;
+    white-space: pre !important; /* Garde le formatage exact */
 }

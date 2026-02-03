@@ -1,6 +1,6 @@
 """
 API Backend - AgentIA Code Standardizer
-Version avec rapports consolides
+Version avec injection chirurgicale de Docstrings (AST)
 """
 
 import os
@@ -20,7 +20,9 @@ from pydantic import BaseModel
 from utils import list_python_files, read_file, write_file, get_relative_path
 from analyser import analyze_file, analyze_code_string, calculate_quality_score
 from corrector import correct_code
-from generator_docstring import generate_docstrings
+
+# CHANGEMENT ICI : On importe la nouvelle fonction intelligente
+from generator_docstring import add_docstrings_smartly
 
 from generator_rapport import generate_report_data, generate_html_report, generate_global_report
 from dependency_graph import analyze_file_dependencies, analyze_project_dependencies, generate_interactive_graph_html
@@ -45,7 +47,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(
     title="AgentIA Code Standardizer",
     description="Analyse, corrige et documente automatiquement du code Python",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 app.add_middleware(
@@ -117,7 +119,6 @@ async def import_from_github(request: GitHubImportRequest):
         raise HTTPException(status_code=400, detail="URL du repository requise")
     
     # Extraire owner/repo depuis l'URL
-    # Supporte: https://github.com/owner/repo, github.com/owner/repo, owner/repo
     url_clean = url.replace("https://", "").replace("http://", "").replace("github.com/", "")
     url_clean = url_clean.rstrip("/").rstrip(".git")
     
@@ -153,7 +154,6 @@ async def import_from_github(request: GitHubImportRequest):
         )
         
         if result.returncode != 0:
-            # Essayer sans spécifier la branche (si main n'existe pas, essayer master)
             if "not found" in result.stderr.lower() or "could not find" in result.stderr.lower():
                 result = subprocess.run(
                     ["git", "clone", "--depth", "1", clone_url, str(job_upload_dir)],
@@ -164,17 +164,14 @@ async def import_from_github(request: GitHubImportRequest):
             
             if result.returncode != 0:
                 error_msg = result.stderr or "Erreur inconnue lors du clone"
-                # Masquer le token dans le message d'erreur
                 if request.token:
                     error_msg = error_msg.replace(request.token, "***")
                 raise HTTPException(status_code=400, detail=f"Erreur Git: {error_msg}")
         
-        # Supprimer le dossier .git pour économiser de l'espace
         git_dir = job_upload_dir / ".git"
         if git_dir.exists():
             shutil.rmtree(git_dir)
         
-        # Lister les fichiers Python
         python_files = list_python_files(str(job_upload_dir))
         
         if not python_files:
@@ -308,23 +305,37 @@ async def process_job(
             print(f"[PROCESS] {relative}")
             
             try:
+                # 1. Lecture du code original
                 original_code = read_file(filepath)
                 final_code = original_code
-                has_docstrings = False
                 
-                # Correction PEP8
+                # 2. Correction PEP8 (en mémoire)
                 if pep8:
                     final_code = correct_code(final_code)
                 
-                # Generation docstrings
+                # 3. Écriture du fichier "propre" sur le disque
+                # C'est nécessaire pour que l'AST puisse travailler sur le fichier physique
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(final_code)
+                
+                has_docstrings = False
+                
+                # 4. Injection chirurgicale des Docstrings (sur le fichier disque)
                 if docstrings:
                     try:
-                        final_code = generate_docstrings(final_code)
-                        has_docstrings = True
+                        print(f"[PROCESS] Injection docstrings pour {relative}...")
+                        # On passe le CHEMIN du fichier, pas le contenu
+                        doc_success = add_docstrings_smartly(str(output_path))
+                        if doc_success:
+                            has_docstrings = True
+                            # IMPORTANT : On relit le fichier modifié pour avoir la version finale
+                            # pour le rapport et la doc markdown
+                            with open(output_path, 'r', encoding='utf-8') as f:
+                                final_code = f.read()
                     except Exception as e:
                         print(f"[PROCESS] Erreur docstrings: {e}")
 
-                #generation documentation
+                # 5. Génération documentation Markdown (basé sur le code final relu)
                 if generate_markdown:
                     try:
                         print(f"[PROCESS] Génération documentation pour {relative}...")
@@ -332,7 +343,6 @@ async def process_job(
                         
                         md_content = generate_markdown_doc(final_code, relative)
                         
-                        # sauvegardé en .md à côté du .py (ex: utils_DOC.md)
                         md_path = output_path.parent / (output_path.stem + "_DOC.md")
                         with open(md_path, 'w', encoding='utf-8') as f:
                             f.write(md_content)
@@ -340,11 +350,7 @@ async def process_job(
                     except Exception as e:
                         print(f"[PROCESS] Erreur documentation: {e}")
                 
-                # Sauvegarder le code corrige
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(final_code)
-                
-                # Profiling (optionnel)
+                # 6. Profiling (optionnel)
                 profile_data = None
                 if profiling:
                     try:
@@ -353,7 +359,7 @@ async def process_job(
                     except Exception as e:
                         print(f"[PROCESS] Erreur profiling: {e}")
                 
-                # Generer les donnees du rapport (inclut profiling si disponible)
+                # 7. Generer les donnees du rapport
                 report_data = generate_report_data(
                     filepath, original_code, final_code, 
                     has_docstrings=has_docstrings,
@@ -367,7 +373,7 @@ async def process_job(
                 with open(report_path, 'w', encoding='utf-8') as f:
                     f.write(report_html)
                 
-                # Graphe de dependances (optionnel)
+                # Graphe de dependances
                 has_graph = False
                 if dependency_graph:
                     try:
@@ -393,7 +399,7 @@ async def process_job(
                 })
                 
             except Exception as e:
-                print(f"[PROCESS] Erreur: {e}")
+                print(f"[PROCESS] Erreur fichier {relative}: {e}")
                 import traceback
                 traceback.print_exc()
                 processed.append({
@@ -407,7 +413,7 @@ async def process_job(
         with open(job_output_dir / "_rapport_global.html", 'w', encoding='utf-8') as f:
             f.write(global_report)
         
-        # Graphe projet (si plusieurs fichiers et option activee)
+        # Graphe projet
         if dependency_graph and len(python_files) > 1:
             try:
                 project_graph = analyze_project_dependencies(str(job_output_dir))
@@ -420,7 +426,6 @@ async def process_job(
         return {"job_id": job_id, "processed": processed, "count": len(processed)}
         
     finally:
-        # Restaurer la configuration IA originale
         llm_service.LLM_API_URL = original_config['LLM_API_URL']
         llm_service.LLM_API_TOKEN = original_config['LLM_API_TOKEN']
         llm_service.LLM_MODEL = original_config['LLM_MODEL']

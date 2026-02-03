@@ -1,6 +1,6 @@
 /**
  * AgentIA v2 - Code Standardizer
- * Frontend simplifie
+ * Frontend avec Diff Syntax Highlighting
  */
 
 const state = {
@@ -158,7 +158,6 @@ const api = {
 };
 
 // Utils
-
 function updateScoreRing(score) {
     el.scoreCircle.style.strokeDashoffset = 283 - (score / 100) * 283;
 }
@@ -187,6 +186,37 @@ function hideLoading() {
     el.overlay.hidden = true;
 }
 
+/**
+ * GESTION DU DIFF ET DE LA COLORATION
+ */
+function renderDiff(original, corrected) {
+    const diff = Diff.diffLines(original, corrected);
+    
+    // On utilise innerHTML = '' pour nettoyer
+    el.codeOriginal.innerHTML = '';
+    el.codeCorrected.innerHTML = '';
+
+    // On crée un conteneur <code> à l'intérieur du <pre> si Prism ne le fait pas déjà
+    // ou on injecte directement si tes sélecteurs pointent déjà sur le bon élément.
+    
+    diff.forEach((part) => {
+        const span = document.createElement('span');
+        if (part.added) span.className = 'diff-added';
+        if (part.removed) span.className = 'diff-removed';
+        span.textContent = part.value;
+
+        if (!part.added) el.codeOriginal.appendChild(span.cloneNode(true));
+        if (!part.removed) el.codeCorrected.appendChild(span.cloneNode(true));
+    });
+
+    // On force la classe de langage pour Prism
+    el.codeOriginal.className = 'code-content language-python';
+    el.codeCorrected.className = 'code-content language-python';
+    
+    Prism.highlightElement(el.codeOriginal);
+    Prism.highlightElement(el.codeCorrected);
+}
+
 function renderFilesList(files, processed) {
     const processedMap = new Map();
     if (processed) processed.forEach(p => processedMap.set(p.file, p));
@@ -198,15 +228,15 @@ function renderFilesList(files, processed) {
         let scoreHtml = '';
         if (p && p.score_before !== undefined) {
             const cls = (p.score_after - p.score_before) > 0 ? 'improved' : '';
-            scoreHtml = '<div class="file-score ' + cls + '">' + p.score_before + ' → ' + p.score_after + '</div>';
+            scoreHtml = `<div class="file-score ${cls}">${p.score_before} → ${p.score_after}</div>`;
         } else if (file.score) {
-            scoreHtml = '<div class="file-score">' + file.score + '</div>';
+            scoreHtml = `<div class="file-score">${file.score}</div>`;
         }
         
-        return '<div class="file-item ' + (i === 0 ? 'active' : '') + '" data-file="' + filename + '">' +
-            '<div class="file-icon">📄</div>' +
-            '<div class="file-info"><div class="file-name">' + filename + '</div></div>' +
-            scoreHtml + '</div>';
+        return `<div class="file-item ${i === 0 ? 'active' : ''}" data-file="${filename}">
+            <div class="file-icon">📄</div>
+            <div class="file-info"><div class="file-name">${filename}</div></div>
+            ${scoreHtml}</div>`;
     }).join('');
     
     el.filesList.querySelectorAll('.file-item').forEach(item => {
@@ -215,16 +245,16 @@ function renderFilesList(files, processed) {
     
     el.fileSelector.innerHTML = files.map(f => {
         const fn = f.file || f;
-        return '<option value="' + fn + '">' + fn + '</option>';
+        return `<option value="${fn}">${fn}</option>`;
     }).join('');
 }
 
 function renderStats(data) {
     let funcs = 0, classes = 0, issues = 0;
     data.files.forEach(f => {
-        funcs += f.functions.length;
-        classes += f.classes.length;
-        issues += f.issues;
+        funcs += f.functions ? f.functions.length : 0;
+        classes += f.classes ? f.classes.length : 0;
+        issues += f.issues || 0;
     });
     
     el.scoreValue.textContent = data.average_score;
@@ -250,23 +280,20 @@ function renderResults(data) {
 async function selectFile(filename) {
     state.selectedFile = filename;
     
-    // Mise à jour visuelle liste
     el.filesList.querySelectorAll('.file-item').forEach(item => {
         item.classList.toggle('active', item.dataset.file === filename);
     });
     el.fileSelector.value = filename;
     
-    // Configuration des boutons d'action (Nouveau)
     el.btnDownloadFile.onclick = () => {
         window.location.href = api.downloadFile(state.jobId, filename);
     };
     
-    // Chargement contenu
     try {
         const preview = await api.preview(state.jobId, filename);
         
-        el.codeOriginal.textContent = preview.original || '';
-        el.codeCorrected.textContent = preview.corrected || '(En attente)';
+        // Appel de la nouvelle fonction de rendu avec Diff
+        renderDiff(preview.original || '', preview.corrected || '');
 
         if (preview.score_before !== null) el.scoreBefore.textContent = preview.score_before;
         if (preview.score_after !== null) el.scoreAfter.textContent = preview.score_after;
@@ -277,34 +304,29 @@ async function selectFile(filename) {
         console.error('Preview error:', err);
     }
 }
+
 function switchTab(tab) {
     state.currentTab = tab;
-    
     $$('.preview-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-    
     el.previewCode.hidden = tab !== 'code';
     el.previewReport.hidden = tab !== 'report';
     el.previewGraph.hidden = tab !== 'graph';
 }
 
 function switchImportSource(source) {
-    // Afficher le bon panneau de détails
     el.importLocal.hidden = source !== 'local';
     el.importGithub.hidden = source !== 'github';
 }
 
 function showFilesContent(count) {
-    // Cacher la section d'import et montrer la liste des fichiers
     el.importSection.hidden = true;
     el.filesContent.hidden = false;
     el.filesCount.textContent = count + ' fichier' + (count > 1 ? 's' : '');
 }
 
 function showImportSection() {
-    // Montrer la section d'import et cacher la liste des fichiers
     el.importSection.hidden = false;
     el.filesContent.hidden = true;
-    // Remettre sur local par défaut
     $('input[name="import-source"][value="local"]').checked = true;
     switchImportSource('local');
 }
@@ -316,12 +338,6 @@ async function handleGithubImport() {
     
     if (!url) {
         alert('Veuillez entrer l\'URL du repository GitHub');
-        return;
-    }
-    
-    // Validation basique de l'URL
-    if (!url.includes('github.com') && !url.includes('/')) {
-        alert('URL invalide. Utilisez le format: https://github.com/user/repo');
         return;
     }
     
@@ -338,15 +354,11 @@ async function handleGithubImport() {
         
         renderFilesList(analysis.files);
         renderStats(analysis);
-        
-        // Afficher la liste des fichiers
         showFilesContent(analysis.total_files);
-        
-        // Activer le bouton de traitement
         el.btnProcess.disabled = false;
         
         el.pageTitle.textContent = 'Repository importé';
-        el.pageDescription.textContent = result.repo + ' • ' + analysis.total_files + ' fichier(s) • Score: ' + analysis.average_score + '/100';
+        el.pageDescription.textContent = `${result.repo} • ${analysis.total_files} fichier(s) • Score: ${analysis.average_score}/100`;
         updateNav(2);
         
         if (analysis.files.length > 0) selectFile(analysis.files[0].file);
@@ -376,14 +388,12 @@ function reset() {
     state.processed = null;
     state.selectedFile = null;
     
-    // Revenir à la section d'import
     showImportSection();
     
-    // Réinitialiser les listes et contenus
     el.filesList.innerHTML = '';
     el.fileSelector.innerHTML = '';
-    el.codeOriginal.textContent = '';
-    el.codeCorrected.textContent = '';
+    el.codeOriginal.innerHTML = '';
+    el.codeCorrected.innerHTML = '';
     el.scoreBefore.textContent = '--';
     el.scoreAfter.textContent = '--';
     el.scoreValue.textContent = '--';
@@ -398,28 +408,6 @@ function reset() {
     el.resultImprovement.textContent = '+0';
     el.fileInput.value = '';
     
-    // Réinitialiser les options de traitement
-    el.optPep8.checked = true;
-    el.optDocstrings.checked = true;
-    el.optMarkdown.checked = false;
-    el.optProfiling.checked = false;
-    el.optGraph.checked = true;
-    
-    // Réinitialiser la config IA (Ollama par défaut)
-    $('input[name="ai-type"][value="ollama"]').checked = true;
-    el.ollamaConfig.hidden = false;
-    el.apiConfig.hidden = true;
-    
-    // Réinitialiser les champs GitHub
-    el.githubUrl.value = '';
-    el.githubToken.value = '';
-    el.githubBranch.value = 'main';
-    
-    // Réinitialiser les iframes
-    el.iframeReport.src = '';
-    el.iframeGraph.src = '';
-    
-    // Désactiver les boutons de résultats
     el.btnDownload.disabled = true;
     el.btnReport.disabled = true;
     el.btnProjectGraph.disabled = true;
@@ -450,15 +438,11 @@ async function handleFiles(fileList) {
         
         renderFilesList(analysis.files);
         renderStats(analysis);
-        
-        // Afficher la liste des fichiers
         showFilesContent(analysis.total_files);
-        
-        // Activer le bouton de traitement
         el.btnProcess.disabled = false;
         
         el.pageTitle.textContent = 'Analyse complète';
-        el.pageDescription.textContent = analysis.total_files + ' fichier(s) • Score: ' + analysis.average_score + '/100';
+        el.pageDescription.textContent = `${analysis.total_files} fichier(s) • Score: ${analysis.average_score}/100`;
         updateNav(2);
         
         if (analysis.files.length > 0) selectFile(analysis.files[0].file);
@@ -486,16 +470,9 @@ async function handleProcess() {
         apiModel: el.apiModel.value
     };
     
-    const hints = [];
-    if (options.pep8) hints.push('PEP8');
-    if (options.docstrings) hints.push('Docstrings');
-    if (options.generate_markdown) hints.push('Documentation.md');
-    if (options.profiling) hints.push('Profiling');
-    if (options.graph) hints.push('Graphes');
-    
     try {
         el.btnProcess.disabled = true;
-        showLoading('Traitement en cours...', hints.join(' + '));
+        showLoading('Traitement en cours...', 'IA + Formatage');
         
         const result = await api.process(state.jobId, options);
         state.processed = result;
@@ -503,7 +480,6 @@ async function handleProcess() {
         renderFilesList(state.analysis.files, result.processed);
         renderResults(result);
         
-        // Activer les boutons de résultats
         el.btnDownload.disabled = false;
         el.btnReport.disabled = false;
         el.btnProjectGraph.disabled = false;
@@ -532,7 +508,7 @@ async function init() {
         el.llmStatus.querySelector('.status-text').textContent = 'Déconnecté';
     }
     
-    // Upload zone
+    // Events
     el.uploadZone.addEventListener('click', () => el.fileInput.click());
     el.uploadZone.addEventListener('dragover', e => { e.preventDefault(); el.uploadZone.classList.add('dragover'); });
     el.uploadZone.addEventListener('dragleave', () => el.uploadZone.classList.remove('dragover'));
@@ -543,15 +519,12 @@ async function init() {
     });
     el.fileInput.addEventListener('change', e => handleFiles(e.target.files));
     
-    // Import source radio buttons (Local / GitHub)
     $$('input[name="import-source"]').forEach(radio => {
         radio.addEventListener('change', () => switchImportSource(radio.value));
     });
     
-    // GitHub import
     el.btnGithubImport.addEventListener('click', handleGithubImport);
     
-    // AI Configuration
     $$('input[name="ai-type"]').forEach(radio => {
         radio.addEventListener('change', () => {
             const isOllama = radio.value === 'ollama';
@@ -560,7 +533,6 @@ async function init() {
         });
     });
     
-    // Buttons
     el.btnClear.addEventListener('click', reset);
     el.btnProcess.addEventListener('click', handleProcess);
     el.btnDownload.addEventListener('click', () => { if (state.jobId) window.location.href = api.downloadUrl(state.jobId); });
@@ -568,11 +540,9 @@ async function init() {
     el.btnProjectGraph.addEventListener('click', () => { if (state.jobId) openModal(api.graphUrl(state.jobId)); });
     el.btnRestart.addEventListener('click', reset);
     
-    // Selector & Tabs
     el.fileSelector.addEventListener('change', e => selectFile(e.target.value));
     $$('.preview-tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
     
-    // Modal
     el.modalClose.addEventListener('click', closeModal);
     $('.modal-backdrop').addEventListener('click', closeModal);
     
