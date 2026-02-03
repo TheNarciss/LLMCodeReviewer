@@ -61,33 +61,77 @@
         <main class="main">
             <div class="content-grid">
                 <div class="panel panel-left">
+                    
                     <div class="card card-upload" id="card-upload">
-                        <div class="upload-zone" id="upload-zone">
-                            <input type="file" id="file-input" multiple accept=".py,.zip" hidden>
-                            <div class="upload-content">
-                                <div class="upload-icon">
-                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                        <polyline points="17 8 12 3 7 8"/>
-                                        <line x1="12" y1="3" x2="12" y2="15"/>
-                                    </svg>
-                                </div>
-                                <p class="upload-title">Glissez vos fichiers ici</p>
-                                <p class="upload-subtitle">ou cliquez pour parcourir</p>
-                                <div class="upload-formats">
-                                    <span class="format-badge">.py</span>
-                                    <span class="format-badge">.zip</span>
+                        <div class="card-header">
+                            <h3>Source du code</h3>
+                        </div>
+                        
+                        <div class="import-section" id="import-section">
+                            <div class="import-options">
+                                <label class="import-option">
+                                    <input type="radio" name="import-source" value="local" checked>
+                                    <div class="import-option-content">
+                                        <span class="import-option-title">Fichiers locaux</span>
+                                        <span class="import-option-desc">Glisser-déposer</span>
+                                    </div>
+                                </label>
+                                <label class="import-option">
+                                    <input type="radio" name="import-source" value="github">
+                                    <div class="import-option-content">
+                                        <span class="import-option-title">GitHub Repo</span>
+                                        <span class="import-option-desc">Cloner URL</span>
+                                    </div>
+                                </label>
+                            </div>
+                            
+                            <div class="import-details" id="import-local">
+                                <div class="upload-zone" id="upload-zone">
+                                    <input type="file" id="file-input" multiple accept=".py,.zip" hidden>
+                                    <div class="upload-content">
+                                        <div class="upload-icon">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                                <polyline points="17 8 12 3 7 8"/>
+                                                <line x1="12" y1="3" x2="12" y2="15"/>
+                                            </svg>
+                                        </div>
+                                        <p class="upload-title">Glissez vos fichiers ici</p>
+                                        <p class="upload-subtitle">ou cliquez pour parcourir</p>
+                                        <div class="upload-formats">
+                                            <span class="format-badge">.py</span>
+                                            <span class="format-badge">.zip</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
+                            
+                            <div class="import-details" id="import-github" hidden>
+                                <label class="input-group">
+                                    <span class="input-label">URL du Repository</span>
+                                    <input type="url" id="github-url" class="input-field" placeholder="https://github.com/user/repo">
+                                </label>
+                                <label class="input-group">
+                                    <span class="input-label">Token GitHub (optionnel)</span>
+                                    <input type="password" id="github-token" class="input-field" placeholder="ghp_xxxxxxxxxxxx">
+                                </label>
+                                <label class="input-group">
+                                    <span class="input-label">Branche</span>
+                                    <input type="text" id="github-branch" class="input-field" placeholder="main" value="main">
+                                </label>
+                                <button class="btn-primary" id="btn-github-import" style="margin-top: 6px;">
+                                    Cloner et analyser
+                                </button>
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="card card-files" id="card-files">
-                        <div class="card-header">
-                            <h3>Fichiers importes</h3>
-                            <button class="btn-text" id="btn-clear">Effacer</button>
+                        
+                        <div class="files-content" id="files-content" hidden>
+                            <div class="files-header">
+                                <span class="files-count" id="files-count">0 fichiers</span>
+                                <button class="btn-text" id="btn-clear">Nouveau</button>
+                            </div>
+                            <div class="files-list" id="files-list"></div>
                         </div>
-                        <div class="files-list" id="files-list"></div>
                     </div>
 
                     <div class="card card-options" id="card-options">
@@ -106,7 +150,14 @@
                                 <input type="checkbox" id="opt-docstrings" checked>
                                 <div class="option-content">
                                     <span class="option-title">Docstrings IA</span>
-                                    <span class="option-desc">Generation automatique via LLM</span>
+                                    <span class="option-desc">Génération automatique via LLM</span>
+                                </div>
+                            </label>
+                            <label class="option-item">
+                                <input type="checkbox" id="opt-markdown">
+                                <div class="option-content">
+                                    <span class="option-title">Documentation (.md)</span>
+                                    <span class="option-desc">Génère un fichier Markdown séparé</span>
                                 </div>
                             </label>
                             <label class="option-item">
@@ -124,14 +175,64 @@
                                 </div>
                             </label>
                         </div>
-                        <button class="btn-primary btn-process" id="btn-process">
+
+                        <div class="ai-config-section" id="ai-config-section">
+                            <h4>Configuration IA</h4>
+                            <div class="ai-config-options">
+                                <label class="ai-option">
+                                    <input type="radio" name="ai-type" value="ollama" checked>
+                                    <div class="ai-option-content">
+                                        <span class="ai-option-title">Ollama (Local)</span>
+                                        <span class="ai-option-desc">Gratuit, fonctionne hors ligne</span>
+                                    </div>
+                                </label>
+                                <label class="ai-option">
+                                    <input type="radio" name="ai-type" value="api">
+                                    <div class="ai-option-content">
+                                        <span class="ai-option-title">API Externe</span>
+                                        <span class="ai-option-desc">OpenAI, OpenRouter, etc.</span>
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div class="ai-details" id="ollama-config">
+                                <label class="input-group">
+                                    <span class="input-label">Modèle Ollama</span>
+                                    <select id="ollama-model" class="input-field">
+                                        <option value="llama3.2:3b">Llama 3.2 3B (recommandé)</option>
+                                        <option value="llama3.1:8b">Llama 3.1 8B</option>
+                                        <option value="codellama:7b">CodeLlama 7B</option>
+                                        <option value="codellama:13b">CodeLlama 13B</option>
+                                        <option value="mistral:7b">Mistral 7B</option>
+                                        <option value="qwen2.5:7b">Qwen 2.5 7B</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="ai-details" id="api-config" hidden>
+                                <label class="input-group">
+                                    <span class="input-label">URL API</span>
+                                    <input type="url" id="api-url" class="input-field" placeholder="https://api.openai.com/v1/chat/completions">
+                                </label>
+                                <label class="input-group">
+                                    <span class="input-label">Clé API</span>
+                                    <input type="password" id="api-key" class="input-field" placeholder="sk-...">
+                                </label>
+                                <label class="input-group">
+                                    <span class="input-label">Modèle</span>
+                                    <input type="text" id="api-model" class="input-field" placeholder="gpt-4" value="gpt-4">
+                                </label>
+                            </div>
+                        </div>
+
+                        <button class="btn-primary btn-process" id="btn-process" disabled>
                             🚀 Lancer le traitement
                         </button>
                     </div>
 
-                    <div class="card card-results" id="card-results" hidden>
+                    <div class="card card-results" id="card-results">
                         <div class="card-header">
-                            <h3>Resultats</h3>
+                            <h3>Résultats</h3>
                         </div>
                         <div class="results-summary">
                             <div class="result-stat">
@@ -140,17 +241,17 @@
                             </div>
                             <div class="result-stat result-stat-main">
                                 <span class="result-value" id="result-improvement">+0</span>
-                                <span class="result-label">Amelioration</span>
+                                <span class="result-label">Amélioration</span>
                             </div>
                         </div>
                         <div class="results-actions">
-                            <button class="btn-primary btn-download" id="btn-download">
-                                📦 Telecharger ZIP
+                            <button class="btn-primary btn-download" id="btn-download" disabled>
+                                📦 Télécharger ZIP
                             </button>
-                            <button class="btn-secondary" id="btn-report">
+                            <button class="btn-secondary" id="btn-report" disabled>
                                 📊 Rapport global
                             </button>
-                            <button class="btn-secondary" id="btn-project-graph">
+                            <button class="btn-secondary" id="btn-project-graph" disabled>
                                 🔗 Graphe projet
                             </button>
                             <button class="btn-text" id="btn-restart">
@@ -188,7 +289,7 @@
                             </div>
                             <div class="stat-box">
                                 <span class="stat-value" id="stat-issues">0</span>
-                                <span class="stat-label">Problemes</span>
+                                <span class="stat-label">Problèmes</span>
                             </div>
                         </div>
                     </div>

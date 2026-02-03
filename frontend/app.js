@@ -20,18 +20,43 @@ const el = {
     pageTitle: $('#page-title'),
     pageDescription: $('#page-description'),
     
+    // Import section
+    importSection: $('#import-section'),
+    importLocal: $('#import-local'),
+    importGithub: $('#import-github'),
+    
     uploadZone: $('#upload-zone'),
+    filesContent: $('#files-content'),
+    filesCount: $('#files-count'),
     fileInput: $('#file-input'),
     cardUpload: $('#card-upload'),
-    cardFiles: $('#card-files'),
     filesList: $('#files-list'),
     btnClear: $('#btn-clear'),
+    
+    // GitHub
+    githubUrl: $('#github-url'),
+    githubToken: $('#github-token'),
+    githubBranch: $('#github-branch'),
+    btnGithubImport: $('#btn-github-import'),
     
     cardOptions: $('#card-options'),
     optPep8: $('#opt-pep8'),
     optDocstrings: $('#opt-docstrings'),
+    optMarkdown: $('#opt-markdown'),
     optProfiling: $('#opt-profiling'),
     optGraph: $('#opt-graph'),
+    
+    // AI Configuration
+    aiConfigSection: $('#ai-config-section'),
+    aiTypeOllama: $('input[name="ai-type"][value="ollama"]'),
+    aiTypeApi: $('input[name="ai-type"][value="api"]'),
+    ollamaConfig: $('#ollama-config'),
+    apiConfig: $('#api-config'),
+    ollamaModel: $('#ollama-model'),
+    apiUrl: $('#api-url'),
+    apiKey: $('#api-key'),
+    apiModel: $('#api-model'),
+    
     btnProcess: $('#btn-process'),
     
     cardStats: $('#card-stats'),
@@ -86,6 +111,19 @@ const api = {
         return res.json();
     },
     
+    async github(url, token, branch) {
+        const res = await fetch('/api/github', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, token, branch })
+        });
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.detail || 'Erreur lors de l\'import GitHub');
+        }
+        return res.json();
+    },
+    
     async analyze(jobId) {
         const res = await fetch('/api/analyze/' + jobId);
         return res.json();
@@ -95,8 +133,14 @@ const api = {
         const params = new URLSearchParams({
             pep8: options.pep8,
             docstrings: options.docstrings,
+            generate_markdown: options.generate_markdown,
             profiling: options.profiling,
-            dependency_graph: options.graph
+            dependency_graph: options.graph,
+            ai_type: options.aiType,
+            ollama_model: options.ollamaModel,
+            api_url: options.apiUrl,
+            api_key: options.apiKey,
+            api_model: options.apiModel
         });
         const res = await fetch('/api/process/' + jobId + '?' + params, { method: 'POST' });
         return res.json();
@@ -114,15 +158,6 @@ const api = {
 };
 
 // Utils
-function truncateCode(code, maxLines = 30) {
-    if (!code) return '';
-    const lines = code.split('\n');
-    if (lines.length <= maxLines) return code;
-    
-    const start = lines.slice(0, 15).join('\n');
-    const end = lines.slice(-12).join('\n');
-    return start + '\n\n    /* ... ' + (lines.length - 27) + ' lignes masquees ... */\n\n' + end;
-}
 
 function updateScoreRing(score) {
     el.scoreCircle.style.strokeDashoffset = 283 - (score / 100) * 283;
@@ -131,7 +166,7 @@ function updateScoreRing(score) {
 function getScoreStatus(score) {
     if (score >= 80) return 'Excellent';
     if (score >= 60) return 'Acceptable';
-    return 'A ameliorer';
+    return 'A améliorer';
 }
 
 function updateNav(step) {
@@ -230,9 +265,9 @@ async function selectFile(filename) {
     try {
         const preview = await api.preview(state.jobId, filename);
         
-        el.codeOriginal.textContent = truncateCode(preview.original);
-        el.codeCorrected.textContent = truncateCode(preview.corrected) || '(En attente)';
-        
+        el.codeOriginal.textContent = preview.original || '';
+        el.codeCorrected.textContent = preview.corrected || '(En attente)';
+
         if (preview.score_before !== null) el.scoreBefore.textContent = preview.score_before;
         if (preview.score_after !== null) el.scoreAfter.textContent = preview.score_after;
         
@@ -252,6 +287,78 @@ function switchTab(tab) {
     el.previewGraph.hidden = tab !== 'graph';
 }
 
+function switchImportSource(source) {
+    // Afficher le bon panneau de détails
+    el.importLocal.hidden = source !== 'local';
+    el.importGithub.hidden = source !== 'github';
+}
+
+function showFilesContent(count) {
+    // Cacher la section d'import et montrer la liste des fichiers
+    el.importSection.hidden = true;
+    el.filesContent.hidden = false;
+    el.filesCount.textContent = count + ' fichier' + (count > 1 ? 's' : '');
+}
+
+function showImportSection() {
+    // Montrer la section d'import et cacher la liste des fichiers
+    el.importSection.hidden = false;
+    el.filesContent.hidden = true;
+    // Remettre sur local par défaut
+    $('input[name="import-source"][value="local"]').checked = true;
+    switchImportSource('local');
+}
+
+async function handleGithubImport() {
+    const url = el.githubUrl.value.trim();
+    const token = el.githubToken.value.trim();
+    const branch = el.githubBranch.value.trim() || 'main';
+    
+    if (!url) {
+        alert('Veuillez entrer l\'URL du repository GitHub');
+        return;
+    }
+    
+    // Validation basique de l'URL
+    if (!url.includes('github.com') && !url.includes('/')) {
+        alert('URL invalide. Utilisez le format: https://github.com/user/repo');
+        return;
+    }
+    
+    try {
+        el.btnGithubImport.disabled = true;
+        showLoading('Clonage du repository...', url);
+        
+        const result = await api.github(url, token, branch);
+        state.jobId = result.job_id;
+        
+        showLoading('Analyse en cours...', result.count + ' fichier(s) Python');
+        const analysis = await api.analyze(state.jobId);
+        state.analysis = analysis;
+        
+        renderFilesList(analysis.files);
+        renderStats(analysis);
+        
+        // Afficher la liste des fichiers
+        showFilesContent(analysis.total_files);
+        
+        // Activer le bouton de traitement
+        el.btnProcess.disabled = false;
+        
+        el.pageTitle.textContent = 'Repository importé';
+        el.pageDescription.textContent = result.repo + ' • ' + analysis.total_files + ' fichier(s) • Score: ' + analysis.average_score + '/100';
+        updateNav(2);
+        
+        if (analysis.files.length > 0) selectFile(analysis.files[0].file);
+    } catch (err) {
+        console.error(err);
+        alert('Erreur: ' + err.message);
+    } finally {
+        el.btnGithubImport.disabled = false;
+        hideLoading();
+    }
+}
+
 function openModal(url) {
     el.modalIframe.src = url;
     el.modal.hidden = false;
@@ -269,12 +376,10 @@ function reset() {
     state.processed = null;
     state.selectedFile = null;
     
-    el.cardFiles.hidden = true;
-    el.cardOptions.hidden = true;
-    el.cardPreview.hidden = true;
-    el.cardResults.hidden = true;
-    el.cardUpload.hidden = false;
+    // Revenir à la section d'import
+    showImportSection();
     
+    // Réinitialiser les listes et contenus
     el.filesList.innerHTML = '';
     el.fileSelector.innerHTML = '';
     el.codeOriginal.textContent = '';
@@ -289,10 +394,39 @@ function reset() {
     el.statFunctions.textContent = '0';
     el.statClasses.textContent = '0';
     el.statIssues.textContent = '0';
+    el.resultFiles.textContent = '0';
+    el.resultImprovement.textContent = '+0';
     el.fileInput.value = '';
     
+    // Réinitialiser les options de traitement
+    el.optPep8.checked = true;
+    el.optDocstrings.checked = true;
+    el.optMarkdown.checked = false;
+    el.optProfiling.checked = false;
+    el.optGraph.checked = true;
+    
+    // Réinitialiser la config IA (Ollama par défaut)
+    $('input[name="ai-type"][value="ollama"]').checked = true;
+    el.ollamaConfig.hidden = false;
+    el.apiConfig.hidden = true;
+    
+    // Réinitialiser les champs GitHub
+    el.githubUrl.value = '';
+    el.githubToken.value = '';
+    el.githubBranch.value = 'main';
+    
+    // Réinitialiser les iframes
+    el.iframeReport.src = '';
+    el.iframeGraph.src = '';
+    
+    // Désactiver les boutons de résultats
+    el.btnDownload.disabled = true;
+    el.btnReport.disabled = true;
+    el.btnProjectGraph.disabled = true;
+    el.btnProcess.disabled = true;
+    
     el.pageTitle.textContent = 'Importer vos fichiers';
-    el.pageDescription.textContent = 'Glissez-deposez vos fichiers Python ou un ZIP';
+    el.pageDescription.textContent = 'Glissez-déposez vos fichiers Python ou un ZIP';
     updateNav(1);
     switchTab('code');
 }
@@ -301,12 +435,12 @@ async function handleFiles(fileList) {
     const files = Array.from(fileList).filter(f => f.name.endsWith('.py') || f.name.endsWith('.zip'));
     
     if (!files.length) {
-        alert('Selectionnez des fichiers Python (.py) ou un ZIP.');
+        alert('Sélectionnez des fichiers Python (.py) ou un ZIP.');
         return;
     }
     
     try {
-        showLoading('Upload des fichiers...', 'Preparation');
+        showLoading('Upload des fichiers...', 'Préparation');
         const result = await api.upload(files);
         state.jobId = result.job_id;
         
@@ -317,11 +451,14 @@ async function handleFiles(fileList) {
         renderFilesList(analysis.files);
         renderStats(analysis);
         
-        el.cardUpload.hidden = true;
-        el.cardPreview.hidden = false;
+        // Afficher la liste des fichiers
+        showFilesContent(analysis.total_files);
         
-        el.pageTitle.textContent = 'Analyse complete';
-        el.pageDescription.textContent = analysis.total_files + ' fichier(s) - Score: ' + analysis.average_score + '/100';
+        // Activer le bouton de traitement
+        el.btnProcess.disabled = false;
+        
+        el.pageTitle.textContent = 'Analyse complète';
+        el.pageDescription.textContent = analysis.total_files + ' fichier(s) • Score: ' + analysis.average_score + '/100';
         updateNav(2);
         
         if (analysis.files.length > 0) selectFile(analysis.files[0].file);
@@ -339,13 +476,20 @@ async function handleProcess() {
     const options = {
         pep8: el.optPep8.checked,
         docstrings: el.optDocstrings.checked,
+        generate_markdown: el.optMarkdown.checked,
         profiling: el.optProfiling.checked,
-        graph: el.optGraph.checked
+        graph: el.optGraph.checked,
+        aiType: $('input[name="ai-type"]:checked').value,
+        ollamaModel: el.ollamaModel.value,
+        apiUrl: el.apiUrl.value,
+        apiKey: el.apiKey.value,
+        apiModel: el.apiModel.value
     };
     
     const hints = [];
     if (options.pep8) hints.push('PEP8');
     if (options.docstrings) hints.push('Docstrings');
+    if (options.generate_markdown) hints.push('Documentation.md');
     if (options.profiling) hints.push('Profiling');
     if (options.graph) hints.push('Graphes');
     
@@ -359,11 +503,13 @@ async function handleProcess() {
         renderFilesList(state.analysis.files, result.processed);
         renderResults(result);
         
-        el.cardOptions.hidden = true;
-        el.cardResults.hidden = false;
+        // Activer les boutons de résultats
+        el.btnDownload.disabled = false;
+        el.btnReport.disabled = false;
+        el.btnProjectGraph.disabled = false;
         
-        el.pageTitle.textContent = 'Traitement termine';
-        el.pageDescription.textContent = result.count + ' fichier(s) traite(s)';
+        el.pageTitle.textContent = 'Traitement terminé';
+        el.pageDescription.textContent = result.count + ' fichier(s) traité(s)';
         updateNav(4);
         
         if (state.selectedFile) selectFile(state.selectedFile);
@@ -383,10 +529,10 @@ async function init() {
         el.llmStatus.querySelector('.status-text').textContent = 
             status.llm.backend === 'api' ? 'API: ' + status.llm.model : 'Ollama: ' + status.llm.model;
     } catch {
-        el.llmStatus.querySelector('.status-text').textContent = 'Deconnecte';
+        el.llmStatus.querySelector('.status-text').textContent = 'Déconnecté';
     }
     
-    // Upload
+    // Upload zone
     el.uploadZone.addEventListener('click', () => el.fileInput.click());
     el.uploadZone.addEventListener('dragover', e => { e.preventDefault(); el.uploadZone.classList.add('dragover'); });
     el.uploadZone.addEventListener('dragleave', () => el.uploadZone.classList.remove('dragover'));
@@ -396,6 +542,23 @@ async function init() {
         handleFiles(e.dataTransfer.files);
     });
     el.fileInput.addEventListener('change', e => handleFiles(e.target.files));
+    
+    // Import source radio buttons (Local / GitHub)
+    $$('input[name="import-source"]').forEach(radio => {
+        radio.addEventListener('change', () => switchImportSource(radio.value));
+    });
+    
+    // GitHub import
+    el.btnGithubImport.addEventListener('click', handleGithubImport);
+    
+    // AI Configuration
+    $$('input[name="ai-type"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            const isOllama = radio.value === 'ollama';
+            el.ollamaConfig.hidden = !isOllama;
+            el.apiConfig.hidden = isOllama;
+        });
+    });
     
     // Buttons
     el.btnClear.addEventListener('click', reset);

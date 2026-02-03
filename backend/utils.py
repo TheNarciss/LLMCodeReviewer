@@ -53,3 +53,15 @@ def timestamp() -> str:
 def get_relative_path(filepath: str, base: str) -> str:
     """Retourne le chemin relatif d'un fichier par rapport à un dossier de base."""
     return os.path.relpath(filepath, base)
+
+    """Retourne une couleur selon le pourcentage de temps."""
+    if percent < 5:
+        return "#22c55e"  # Vert
+    elif percent < 15:
+        return "#84cc16"  # Vert clair
+    elif percent < 30:
+        return "#f59e0b"  # Orange
+    elif percent < 50:
+        return "#f97316"  # Orange fonce
+    else:
+        return "#ef4444"  # Rouge

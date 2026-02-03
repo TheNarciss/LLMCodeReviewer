@@ -7,19 +7,31 @@ import os
 import shutil
 import zipfile
 import uuid
+import tempfile
+import subprocess
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from utils import list_python_files, read_file, write_file, get_relative_path
 from analyser import analyze_file, analyze_code_string, calculate_quality_score
 from corrector import correct_code
 from generator_docstring import generate_docstrings
+
 from generator_rapport import generate_report_data, generate_html_report, generate_global_report
 from dependency_graph import analyze_file_dependencies, analyze_project_dependencies, generate_interactive_graph_html
 from llm_service import get_backend_info
+
+
+# Modèle pour l'import GitHub
+class GitHubImportRequest(BaseModel):
+    url: str
+    token: Optional[str] = None
+    branch: Optional[str] = "main"
 
 # Configuration
 BASE_DIR = Path(__file__).parent.parent
@@ -95,6 +107,103 @@ async def upload_files(files: list[UploadFile] = File(...)):
     return {"job_id": job_id, "files": uploaded_files, "count": len(uploaded_files)}
 
 
+@app.post("/api/github")
+async def import_from_github(request: GitHubImportRequest):
+    """Clone un repository GitHub et prépare les fichiers pour analyse."""
+    
+    # Valider l'URL
+    url = request.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL du repository requise")
+    
+    # Extraire owner/repo depuis l'URL
+    # Supporte: https://github.com/owner/repo, github.com/owner/repo, owner/repo
+    url_clean = url.replace("https://", "").replace("http://", "").replace("github.com/", "")
+    url_clean = url_clean.rstrip("/").rstrip(".git")
+    
+    parts = url_clean.split("/")
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail="URL invalide. Format attendu: https://github.com/owner/repo")
+    
+    owner = parts[0]
+    repo = parts[1]
+    branch = request.branch or "main"
+    
+    # Créer un job_id
+    job_id = str(uuid.uuid4())[:8]
+    job_upload_dir = UPLOAD_DIR / job_id
+    
+    if job_upload_dir.exists():
+        shutil.rmtree(job_upload_dir)
+    job_upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Construire l'URL de clone
+        if request.token:
+            clone_url = f"https://{request.token}@github.com/{owner}/{repo}.git"
+        else:
+            clone_url = f"https://github.com/{owner}/{repo}.git"
+        
+        # Cloner le repository
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", branch, clone_url, str(job_upload_dir)],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        if result.returncode != 0:
+            # Essayer sans spécifier la branche (si main n'existe pas, essayer master)
+            if "not found" in result.stderr.lower() or "could not find" in result.stderr.lower():
+                result = subprocess.run(
+                    ["git", "clone", "--depth", "1", clone_url, str(job_upload_dir)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr or "Erreur inconnue lors du clone"
+                # Masquer le token dans le message d'erreur
+                if request.token:
+                    error_msg = error_msg.replace(request.token, "***")
+                raise HTTPException(status_code=400, detail=f"Erreur Git: {error_msg}")
+        
+        # Supprimer le dossier .git pour économiser de l'espace
+        git_dir = job_upload_dir / ".git"
+        if git_dir.exists():
+            shutil.rmtree(git_dir)
+        
+        # Lister les fichiers Python
+        python_files = list_python_files(str(job_upload_dir))
+        
+        if not python_files:
+            raise HTTPException(status_code=400, detail="Aucun fichier Python trouvé dans ce repository")
+        
+        uploaded_files = []
+        for py_file in python_files:
+            rel_path = get_relative_path(py_file, str(job_upload_dir))
+            uploaded_files.append(rel_path)
+        
+        return {
+            "job_id": job_id,
+            "files": uploaded_files,
+            "count": len(uploaded_files),
+            "source": "github",
+            "repo": f"{owner}/{repo}",
+            "branch": branch
+        }
+        
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(job_upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=408, detail="Timeout: le clonage a pris trop de temps")
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(job_upload_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Erreur inattendue: {str(e)}")
+
+
 @app.get("/api/analyze/{job_id}")
 async def analyze_job(job_id: str):
     """Analyse tous les fichiers d'un job."""
@@ -141,8 +250,14 @@ async def process_job(
     job_id: str,
     pep8: bool = True,
     docstrings: bool = True,
+    generate_markdown: bool = False,
     profiling: bool = False,
-    dependency_graph: bool = False
+    dependency_graph: bool = False,
+    ai_type: str = "ollama",
+    ollama_model: str = "llama3.2:3b",
+    api_url: str = "",
+    api_key: str = "",
+    api_model: str = "gpt-4"
 ):
     """
     Traite les fichiers et genere:
@@ -150,124 +265,165 @@ async def process_job(
     - fichier_rapport.html (analyse + doc + profiling)
     - fichier_graph.html (si dependency_graph=True)
     """
-    job_upload_dir = UPLOAD_DIR / job_id
-    job_output_dir = OUTPUT_DIR / job_id
+    # Configuration IA temporaire pour ce job
+    import llm_service
+    original_config = {
+        'LLM_API_URL': llm_service.LLM_API_URL,
+        'LLM_API_TOKEN': llm_service.LLM_API_TOKEN,
+        'LLM_MODEL': llm_service.LLM_MODEL
+    }
     
-    print(f"[PROCESS] Job {job_id} - PEP8:{pep8} Docstrings:{docstrings} Profiling:{profiling} Graph:{dependency_graph}")
+    # Appliquer la configuration IA choisie
+    if ai_type == "api" and api_url and api_key:
+        llm_service.LLM_API_URL = api_url
+        llm_service.LLM_API_TOKEN = api_key
+        llm_service.LLM_MODEL = api_model
+    elif ai_type == "ollama":
+        llm_service.LLM_API_URL = ""
+        llm_service.LLM_API_TOKEN = ""
+        llm_service.LLM_MODEL = ollama_model
     
-    if not job_upload_dir.exists():
-        raise HTTPException(status_code=404, detail="Job non trouve")
-    
-    if job_output_dir.exists():
-        shutil.rmtree(job_output_dir)
-    job_output_dir.mkdir(parents=True, exist_ok=True)
-    
-    python_files = list_python_files(str(job_upload_dir))
-    processed = []
-    reports_data = []
-    
-    for filepath in python_files:
-        relative = get_relative_path(filepath, str(job_upload_dir))
-        output_path = job_output_dir / relative
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        job_upload_dir = UPLOAD_DIR / job_id
+        job_output_dir = OUTPUT_DIR / job_id
         
-        print(f"[PROCESS] {relative}")
+        print(f"[PROCESS] Job {job_id} - PEP8:{pep8} Docstrings:{docstrings} Profiling:{profiling} Graph:{dependency_graph} AI:{ai_type}")
         
-        try:
-            original_code = read_file(filepath)
-            final_code = original_code
-            has_docstrings = False
+        if not job_upload_dir.exists():
+            raise HTTPException(status_code=404, detail="Job non trouve")
+        
+        if job_output_dir.exists():
+            shutil.rmtree(job_output_dir)
+        job_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        python_files = list_python_files(str(job_upload_dir))
+        processed = []
+        reports_data = []
+        
+        for filepath in python_files:
+            relative = get_relative_path(filepath, str(job_upload_dir))
+            output_path = job_output_dir / relative
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Correction PEP8
-            if pep8:
-                final_code = correct_code(final_code)
+            print(f"[PROCESS] {relative}")
             
-            # Generation docstrings
-            if docstrings:
-                try:
-                    final_code = generate_docstrings(final_code)
-                    has_docstrings = True
-                except Exception as e:
-                    print(f"[PROCESS] Erreur docstrings: {e}")
-            
-            # Sauvegarder le code corrige
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(final_code)
-            
-            # Profiling (optionnel)
-            profile_data = None
-            if profiling:
-                try:
-                    from profiler import profile_code
-                    profile_data = profile_code(final_code, relative)
-                except Exception as e:
-                    print(f"[PROCESS] Erreur profiling: {e}")
-            
-            # Generer les donnees du rapport (inclut profiling si disponible)
-            report_data = generate_report_data(
-                filepath, original_code, final_code, 
-                has_docstrings=has_docstrings,
-                profile_data=profile_data
-            )
-            reports_data.append(report_data)
-            
-            # Generer le rapport HTML unifie
-            report_html = generate_html_report(report_data)
-            report_path = output_path.parent / (output_path.stem + "_rapport.html")
-            with open(report_path, 'w', encoding='utf-8') as f:
-                f.write(report_html)
-            
-            # Graphe de dependances (optionnel)
-            has_graph = False
-            if dependency_graph:
-                try:
-                    graph_data = analyze_file_dependencies(str(output_path))
-                    graph_html = generate_interactive_graph_html(graph_data, f"Dependances: {relative}")
-                    graph_path = output_path.parent / (output_path.stem + "_graph.html")
-                    with open(graph_path, 'w', encoding='utf-8') as f:
-                        f.write(graph_html)
-                    has_graph = True
-                except Exception as e:
-                    print(f"[PROCESS] Erreur graphe: {e}")
-            
-            print(f"[PROCESS] Score: {report_data['score_before']} -> {report_data['score_after']}")
-            
-            processed.append({
-                "file": relative,
-                "status": "ok",
-                "score_before": report_data["score_before"],
-                "score_after": report_data["score_after"],
-                "has_docstrings": has_docstrings,
-                "has_profiling": profile_data is not None,
-                "has_graph": has_graph
-            })
-            
-        except Exception as e:
-            print(f"[PROCESS] Erreur: {e}")
-            import traceback
-            traceback.print_exc()
-            processed.append({
-                "file": relative,
-                "status": "error",
-                "error": str(e)
-            })
+            try:
+                original_code = read_file(filepath)
+                final_code = original_code
+                has_docstrings = False
+                
+                # Correction PEP8
+                if pep8:
+                    final_code = correct_code(final_code)
+                
+                # Generation docstrings
+                if docstrings:
+                    try:
+                        final_code = generate_docstrings(final_code)
+                        has_docstrings = True
+                    except Exception as e:
+                        print(f"[PROCESS] Erreur docstrings: {e}")
+
+                #generation documentation
+                if generate_markdown:
+                    try:
+                        print(f"[PROCESS] Génération documentation pour {relative}...")
+                        from generator_documentation import generate_markdown_doc
+                        
+                        md_content = generate_markdown_doc(final_code, relative)
+                        
+                        # sauvegardé en .md à côté du .py (ex: utils_DOC.md)
+                        md_path = output_path.parent / (output_path.stem + "_DOC.md")
+                        with open(md_path, 'w', encoding='utf-8') as f:
+                            f.write(md_content)
+                            
+                    except Exception as e:
+                        print(f"[PROCESS] Erreur documentation: {e}")
+                
+                # Sauvegarder le code corrige
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(final_code)
+                
+                # Profiling (optionnel)
+                profile_data = None
+                if profiling:
+                    try:
+                        from profiler import profile_code
+                        profile_data = profile_code(final_code, relative)
+                    except Exception as e:
+                        print(f"[PROCESS] Erreur profiling: {e}")
+                
+                # Generer les donnees du rapport (inclut profiling si disponible)
+                report_data = generate_report_data(
+                    filepath, original_code, final_code, 
+                    has_docstrings=has_docstrings,
+                    profile_data=profile_data
+                )
+                reports_data.append(report_data)
+                
+                # Generer le rapport HTML unifie
+                report_html = generate_html_report(report_data)
+                report_path = output_path.parent / (output_path.stem + "_rapport.html")
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    f.write(report_html)
+                
+                # Graphe de dependances (optionnel)
+                has_graph = False
+                if dependency_graph:
+                    try:
+                        graph_data = analyze_file_dependencies(str(output_path))
+                        graph_html = generate_interactive_graph_html(graph_data, f"Dependances: {relative}")
+                        graph_path = output_path.parent / (output_path.stem + "_graph.html")
+                        with open(graph_path, 'w', encoding='utf-8') as f:
+                            f.write(graph_html)
+                        has_graph = True
+                    except Exception as e:
+                        print(f"[PROCESS] Erreur graphe: {e}")
+                
+                print(f"[PROCESS] Score: {report_data['score_before']} -> {report_data['score_after']}")
+                
+                processed.append({
+                    "file": relative,
+                    "status": "ok",
+                    "score_before": report_data["score_before"],
+                    "score_after": report_data["score_after"],
+                    "has_docstrings": has_docstrings,
+                    "has_profiling": profile_data is not None,
+                    "has_graph": has_graph
+                })
+                
+            except Exception as e:
+                print(f"[PROCESS] Erreur: {e}")
+                import traceback
+                traceback.print_exc()
+                processed.append({
+                    "file": relative,
+                    "status": "error",
+                    "error": str(e)
+                })
     
-    # Rapport global
-    global_report = generate_global_report(reports_data, job_id)
-    with open(job_output_dir / "_rapport_global.html", 'w', encoding='utf-8') as f:
-        f.write(global_report)
-    
-    # Graphe projet (si plusieurs fichiers et option activee)
-    if dependency_graph and len(python_files) > 1:
-        try:
-            project_graph = analyze_project_dependencies(str(job_output_dir))
-            project_graph_html = generate_interactive_graph_html(project_graph, f"Projet - {job_id}")
-            with open(job_output_dir / "_project_graph.html", 'w', encoding='utf-8') as f:
-                f.write(project_graph_html)
-        except Exception as e:
-            print(f"[PROCESS] Erreur graphe projet: {e}")
-    
-    return {"job_id": job_id, "processed": processed, "count": len(processed)}
+        # Rapport global
+        global_report = generate_global_report(reports_data, job_id)
+        with open(job_output_dir / "_rapport_global.html", 'w', encoding='utf-8') as f:
+            f.write(global_report)
+        
+        # Graphe projet (si plusieurs fichiers et option activee)
+        if dependency_graph and len(python_files) > 1:
+            try:
+                project_graph = analyze_project_dependencies(str(job_output_dir))
+                project_graph_html = generate_interactive_graph_html(project_graph, f"Projet - {job_id}")
+                with open(job_output_dir / "_project_graph.html", 'w', encoding='utf-8') as f:
+                    f.write(project_graph_html)
+            except Exception as e:
+                print(f"[PROCESS] Erreur graphe projet: {e}")
+        
+        return {"job_id": job_id, "processed": processed, "count": len(processed)}
+        
+    finally:
+        # Restaurer la configuration IA originale
+        llm_service.LLM_API_URL = original_config['LLM_API_URL']
+        llm_service.LLM_API_TOKEN = original_config['LLM_API_TOKEN']
+        llm_service.LLM_MODEL = original_config['LLM_MODEL']
 
 
 @app.get("/api/preview/{job_id}/{filename:path}")
@@ -392,4 +548,4 @@ async def download_single_file(job_id: str, filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="localhost", port=8000)

@@ -86,19 +86,50 @@ def call_ollama(prompt: str) -> str:
     try:
         print(f"[LLM] Appel Ollama local: {LLM_MODEL}")
         
+        # Essayer d'abord l'API REST d'Ollama (recommandé)
+        try:
+            response = httpx.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=300.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data.get("response", "").strip()
+            print(f"[LLM] Réponse reçue ({len(content)} chars)")
+            return content
+        except (httpx.RequestError, httpx.HTTPStatusError, httpx.ConnectError):
+            print("[LLM] API REST non disponible, tentative avec subprocess...")
+        
+        # Fallback: utiliser subprocess avec encodage explicite
         result = subprocess.run(
             ["ollama", "run", LLM_MODEL],
             input=prompt,
             text=True,
+            encoding='utf-8',  # Spécifier explicitement UTF-8
+            errors='replace',  # Gérer les erreurs d'encodage
             capture_output=True,
             check=True,
             timeout=300
         )
-        return result.stdout.strip()
+        content = result.stdout.strip()
+        print(f"[LLM] Réponse reçue ({len(content)} chars)")
+        return content
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Erreur Ollama: {e.stderr}")
+        error_msg = e.stderr if e.stderr else str(e)
+        raise RuntimeError(f"Erreur Ollama: {error_msg}")
     except FileNotFoundError:
-        raise RuntimeError("Ollama n'est pas installé. Installez-le ou configurez une API externe dans .env")
+        raise RuntimeError("Ollama n'est pas installé. Installez-le depuis https://ollama.com/")
+    except UnicodeDecodeError as e:
+        raise RuntimeError(f"Erreur d'encodage avec Ollama: {e}. Essayez de redémarrer Ollama.")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Timeout: Ollama n'a pas répondu dans les 5 minutes")
+    except Exception as e:
+        raise RuntimeError(f"Erreur inattendue avec Ollama: {e}")
 
 
 def generate(prompt: str) -> str:

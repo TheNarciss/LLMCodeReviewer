@@ -431,28 +431,44 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
         .node { cursor: pointer; }
         .node circle {
             stroke: #1e293b;
-            stroke-width: 2px;
+            stroke-width: 2.5px;
             transition: all 0.2s;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
         }
         .node:hover circle {
             stroke: white;
-            stroke-width: 3px;
+            stroke-width: 4px;
+            filter: drop-shadow(0 4px 8px rgba(255,255,255,0.3));
         }
         .node text {
-            font-size: 12px;
-            fill: #e2e8f0;
+            font-size: 13px;
+            font-weight: 600;
+            fill: #f1f5f9;
             pointer-events: none;
-            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            paint-order: stroke;
+            stroke: #0f172a;
+            stroke-width: 3px;
+            stroke-linecap: round;
+            stroke-linejoin: round;
         }
+        .node.hidden { opacity: 0.1; }
+        .link.hidden { opacity: 0.05; }
         
         .link {
-            stroke-opacity: 0.4;
+            stroke-opacity: 0.6;
             fill: none;
+            stroke-width: 2px;
+            transition: all 0.2s;
+        }
+        .link:hover {
+            stroke-opacity: 1;
+            stroke-width: 3px;
         }
         .link.imports { stroke: #3b82f6; }
-        .link.inherits { stroke: #22c55e; stroke-width: 2; }
-        .link.calls { stroke: #f59e0b; stroke-dasharray: 4; }
-        .link.instantiates { stroke: #8b5cf6; }
+        .link.inherits { stroke: #22c55e; stroke-width: 3px; }
+        .link.calls { stroke: #f59e0b; stroke-dasharray: 5 3; }
+        .link.instantiates { stroke: #8b5cf6; stroke-width: 2.5px; }
+        .link.highlighted { stroke-opacity: 1; stroke-width: 4px; filter: drop-shadow(0 0 4px currentColor); }
         
         .tooltip {
             position: fixed;
@@ -476,10 +492,23 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
         
         .controls {
             position: fixed;
-            bottom: 20px;
+            top: 70px;
             right: 20px;
             display: flex;
+            flex-direction: column;
             gap: 8px;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(8px);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+        .controls h3 {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+            letter-spacing: 0.5px;
         }
         .controls button {
             padding: 8px 16px;
@@ -489,9 +518,11 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
             border-radius: 6px;
             cursor: pointer;
             font-size: 12px;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            text-align: left;
         }
-        .controls button:hover { background: #334155; }
+        .controls button:hover { background: #334155; transform: translateX(2px); }
+        .controls button.active { background: #3b82f6; border-color: #3b82f6; }
     </style>
 </head>
 <body>
@@ -510,8 +541,14 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
     </div>
     
     <div class="controls">
+        <h3>Affichage</h3>
         <button onclick="resetZoom()">Recentrer</button>
-        <button onclick="toggleLabels()">Labels On/Off</button>
+        <button onclick="resetFocus()">Réinitialiser</button>
+        <button id="labelBtn" onclick="toggleLabels()" class="active">Labels</button>
+        <h3 style="margin-top:12px">Filtres</h3>
+        <button id="filterImport" onclick="toggleFilter('import')" class="active">Imports</button>
+        <button id="filterClass" onclick="toggleFilter('class')" class="active">Classes</button>
+        <button id="filterFunction" onclick="toggleFilter('function')" class="active">Fonctions</button>
     </div>
     
     <script>
@@ -546,35 +583,48 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
         
         svg.call(zoom);
         
-        // Simulation physique optimisée
+        // Simulation physique optimisée - distances réduites pour graphe plus compact
         const simulation = d3.forceSimulation(nodes)
             .force('link', d3.forceLink(links)
                 .id(d => d.id)
                 .distance(d => {
-                    // Distance plus grande pour les héritages et imports
-                    if (d.type === 'inherits') return 150 * scaleFactor;
-                    return 100 * scaleFactor;
+                    // Distances réduites pour rapprocher les nœuds
+                    if (d.type === 'inherits') return 120;
+                    if (d.type === 'calls') return 80;
+                    return 70;
                 })
+                .strength(0.5)
             )
             .force('charge', d3.forceManyBody()
                 .strength(d => {
-                    // Répulsion plus forte pour les gros noeuds (modules/classes)
-                    if (d.type === 'module') return -800 * scaleFactor;
-                    if (d.type === 'class') return -600 * scaleFactor;
-                    return -300 * scaleFactor;
+                    // Répulsion modérée pour compacité tout en évitant chevauchements
+                    if (d.type === 'module') return -800;
+                    if (d.type === 'class') return -600;
+                    if (d.type === 'function') return -400;
+                    return -300;
                 })
+                .distanceMax(300)
             )
             .force('center', d3.forceCenter(width / 2, height / 2))
             .force('collide', d3.forceCollide().radius(d => {
-                 return (d.type === 'module' ? 60 : 30) * scaleFactor;
-            }).iterations(2));
+                 // Rayon de collision ajusté
+                 if (d.type === 'module') return 40;
+                 if (d.type === 'class') return 32;
+                 return 24;
+            }).strength(0.8).iterations(2));
         
         const link = g.append('g')
             .selectAll('line')
             .data(links)
             .join('line')
             .attr('class', d => 'link ' + d.type)
-            .attr('stroke-width', 1.5);
+            .attr('stroke-width', d => d.type === 'inherits' ? 3 : 2)
+            .on('mouseover', function() {
+                d3.select(this).classed('highlighted', true);
+            })
+            .on('mouseout', function() {
+                d3.select(this).classed('highlighted', false);
+            });
         
         const node = g.append('g')
             .selectAll('.node')
@@ -588,41 +638,133 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
         
         node.append('circle')
             .attr('r', d => {
-                const base = d.type === 'class' ? 20 : d.type === 'module' ? 25 : 12;
-                return base * (scaleFactor < 0.8 ? 0.8 : 1); // Pas trop petit sur mobile
+                // Tailles plus grandes et différenciées
+                if (d.type === 'module') return 32;
+                if (d.type === 'class') return 24;
+                if (d.type === 'function') return 18;
+                return 14;
             })
-            .attr('fill', d => colorMap[d.type] || '#64748b');
+            .attr('fill', d => colorMap[d.type] || '#64748b')
+            .attr('opacity', 0.95);
         
         let showLabels = true;
         const labels = node.append('text')
             .text(d => d.label)
-            .attr('dx', d => d.type === 'module' ? 30 : 18)
-            .attr('dy', 4)
-            .style('font-size', d => d.type === 'module' ? '14px' : '11px')
-            .style('font-weight', d => d.type === 'module' || d.type === 'class' ? 'bold' : 'normal');
+            .attr('dx', d => {
+                if (d.type === 'module') return 38;
+                if (d.type === 'class') return 30;
+                return 22;
+            })
+            .attr('dy', 5)
+            .style('font-size', d => {
+                if (d.type === 'module') return '15px';
+                if (d.type === 'class') return '14px';
+                return '12px';
+            })
+            .style('font-weight', d => d.type === 'module' || d.type === 'class' ? 'bold' : '600');
         
-        // Tooltip logic
+        // Tooltip logic et interaction avancée
         const tooltip = d3.select('#tooltip');
+        let selectedNode = null;
         
         node.on('mouseover', function(event, d) {
             let content = '<div class="type-badge" style="background:' + (colorMap[d.type] || '#64748b') + '">' + d.type + '</div>';
             content += '<h3>' + d.label + '</h3>';
             
             if (d.lines) content += '<p>Lignes: ' + d.lines + '</p>';
-            if (d.methods) content += '<p>' + d.methods.length + ' méthodes</p>';
-            if (d.calls) content += '<p>Appels sortants: ' + d.calls.length + '</p>';
+            if (d.methods) content += '<p>Méthodes: ' + d.methods.length + '</p>';
+            if (d.calls) content += '<p>Appels: ' + d.calls.length + '</p>';
+            content += '<p style="margin-top:8px;font-size:10px;color:#64748b;">Cliquez pour voir les dépendances</p>';
 
             tooltip.html(content)
                 .style('display', 'block')
                 .style('left', (event.pageX + 15) + 'px')
                 .style('top', (event.pageY + 15) + 'px');
                 
-            d3.select(this).select('circle').attr('stroke', 'white').attr('stroke-width', 3);
+            if (d !== selectedNode) {
+                d3.select(this).select('circle').attr('stroke', 'white').attr('stroke-width', 4);
+            }
+            
+            // Highlight des liens connectés
+            link.classed('highlighted', l => l.source.id === d.id || l.target.id === d.id);
         })
-        .on('mouseout', function() {
+        .on('mouseout', function(event, d) {
             tooltip.style('display', 'none');
-            d3.select(this).select('circle').attr('stroke', '#1e293b').attr('stroke-width', 2);
+            if (d !== selectedNode) {
+                d3.select(this).select('circle').attr('stroke', '#1e293b').attr('stroke-width', 2.5);
+            }
+            link.classed('highlighted', false);
+        })
+        .on('click', function(event, d) {
+            event.stopPropagation();
+            focusOnNode(d, this);
         });
+        
+        // Clic sur fond pour déselectionner
+        svg.on('click', function() {
+            if (selectedNode) {
+                resetFocus();
+            }
+        });
+        
+        function focusOnNode(d, element) {
+            selectedNode = d;
+            
+            // Marquer le nœud sélectionné
+            node.select('circle')
+                .attr('stroke', n => n === d ? '#fbbf24' : '#1e293b')
+                .attr('stroke-width', n => n === d ? 5 : 2.5);
+            
+            // Trouver tous les nœuds connectés
+            const connectedIds = new Set();
+            connectedIds.add(d.id);
+            
+            links.forEach(l => {
+                if (l.source.id === d.id) connectedIds.add(l.target.id);
+                if (l.target.id === d.id) connectedIds.add(l.source.id);
+            });
+            
+            // Mettre en évidence le sous-graphe
+            node.style('opacity', n => connectedIds.has(n.id) ? 1 : 0.2);
+            link.style('opacity', l => 
+                (l.source.id === d.id || l.target.id === d.id) ? 1 : 0.1
+            );
+            
+            // Afficher info dans tooltip persistant
+            const outgoing = links.filter(l => l.source.id === d.id).length;
+            const incoming = links.filter(l => l.target.id === d.id).length;
+            
+            let content = '<div class="type-badge" style="background:' + (colorMap[d.type] || '#64748b') + '">FOCUS: ' + d.type + '</div>';
+            content += '<h3>' + d.label + '</h3>';
+            content += '<p>Connexions: ' + connectedIds.size + ' nœuds</p>';
+            content += '<p>Sortantes: ' + outgoing + '</p>';
+            content += '<p>Entrantes: ' + incoming + '</p>';
+            if (d.methods) {
+                content += '<hr style="margin:8px 0;border-color:#475569">';
+                content += '<p><strong>Méthodes:</strong></p>';
+                d.methods.slice(0, 5).forEach(m => {
+                    content += '<p style="font-size:11px;margin-left:8px;">- ' + m.name + '</p>';
+                });
+                if (d.methods.length > 5) content += '<p style="font-size:10px;color:#64748b;">... et ' + (d.methods.length - 5) + ' autres</p>';
+            }
+            content += '<p style="margin-top:8px;font-size:10px;color:#64748b;">Recliquez ou cliquez sur le fond pour réinitialiser</p>';
+            
+            tooltip.html(content)
+                .style('display', 'block')
+                .style('left', '20px')
+                .style('top', '80px')
+                .style('pointer-events', 'auto');
+        }
+        
+        function resetFocus() {
+            selectedNode = null;
+            node.select('circle')
+                .attr('stroke', '#1e293b')
+                .attr('stroke-width', 2.5);
+            node.style('opacity', 1);
+            link.style('opacity', 1);
+            tooltip.style('display', 'none').style('pointer-events', 'none');
+        }
         
         simulation.on('tick', () => {
             link
@@ -643,14 +785,37 @@ def generate_interactive_graph_html(graph_data: dict, title: str = "Graphe de De
             d.fx = null; d.fy = null;
         }
         
+        // État des filtres
+        let filters = { import: true, class: true, function: true, module: true };
+        
         function resetZoom() {
             svg.transition().duration(750).call(
                 zoom.transform, d3.zoomIdentity.translate(width/2, height/2).scale(1).translate(-width/2, -height/2)
             );
         }
+        
         function toggleLabels() {
             showLabels = !showLabels;
             labels.style('display', showLabels ? 'block' : 'none');
+            document.getElementById('labelBtn').classList.toggle('active', showLabels);
+        }
+        
+        function toggleFilter(type) {
+            filters[type] = !filters[type];
+            const btn = document.getElementById('filter' + type.charAt(0).toUpperCase() + type.slice(1));
+            btn.classList.toggle('active', filters[type]);
+            
+            // Masquer/afficher les nœuds selon leur type
+            node.each(function(d) {
+                d3.select(this).classed('hidden', !filters[d.type]);
+            });
+            
+            // Masquer/afficher les liens connectés
+            link.each(function(d) {
+                const sourceType = d.source.type;
+                const targetType = d.target.type;
+                d3.select(this).classed('hidden', !filters[sourceType] || !filters[targetType]);
+            });
         }
         
         // Gestion redimensionnement fenêtre

@@ -146,20 +146,17 @@ def generate_html_report(report_data: dict) -> str:
             for m in cls.get("methods", []):
                 complexity = m.get("complexity", 1)
                 c_color = get_complexity_color(complexity)
-                doc_icon = "✓" if m.get("has_docstring") else "✗"
-                doc_color = "#22c55e" if m.get("has_docstring") else "#ef4444"
                 args_str = ", ".join(m.get("args", []))
                 
                 methods_html += """
                 <div class="method">
                     <code>""" + m["name"] + """(""" + args_str + """)</code>
                     <span class="badge" style="background:""" + c_color + """">C:""" + str(complexity) + """</span>
-                    <span style="color:""" + doc_color + """">""" + doc_icon + """</span>
                 </div>
                 """
             
-            doc_badge = '<span class="badge badge-green">Doc ✓</span>' if cls.get("has_docstring") else '<span class="badge badge-gray">Doc ✗</span>'
-            
+            doc_badge = ""
+                        
             classes_content += """
             <div class="class-card">
                 <div class="class-header">
@@ -191,9 +188,6 @@ def generate_html_report(report_data: dict) -> str:
         for func in functions:
             complexity = func.get("complexity", 1)
             c_color = get_complexity_color(complexity)
-            doc_icon = "✓" if func.get("has_docstring") else "✗"
-            doc_color = "#22c55e" if func.get("has_docstring") else "#ef4444"
-            
             args_list = func.get("args", [])
             args_str = ", ".join([a["name"] + (": " + a.get("type", "") if a.get("type") else "") for a in args_list])
             return_type = func.get("return_type") or "-"
@@ -209,7 +203,6 @@ def generate_html_report(report_data: dict) -> str:
                 <td class="args">""" + args_str + """</td>
                 <td>""" + return_type + """</td>
                 <td><span class="badge" style="background:""" + c_color + """">""" + str(complexity) + """</span></td>
-                <td style="color:""" + doc_color + """">""" + doc_icon + """</td>
                 <td>""" + str(func.get("lines", 0)) + """</td>
             </tr>
             """
@@ -222,7 +215,7 @@ def generate_html_report(report_data: dict) -> str:
             </div>
             <div class="section-content">
                 <table>
-                    <thead><tr><th>Nom</th><th>Arguments</th><th>Retour</th><th>Complexite</th><th>Doc</th><th>Lignes</th></tr></thead>
+                    <thead><tr><th>Nom</th><th>Arguments</th><th>Retour</th><th>Complexite</th><th>Lignes</th></tr></thead>
                     <tbody>""" + func_rows + """</tbody>
                 </table>
             </div>
@@ -561,7 +554,7 @@ def generate_html_report(report_data: dict) -> str:
     <div class="container">
         <div class="header">
             <h1>📄 """ + report_data["filename"] + """</h1>
-            <p>Rapport genere le """ + report_data["date"] + """</p>
+            <p>Rapport généré le """ + report_data["date"] + """</p>
         </div>
         
         <div class="scores">
@@ -571,7 +564,7 @@ def generate_html_report(report_data: dict) -> str:
             </div>
             <div class="score-box after">
                 <div class="score-value">""" + str(score_after) + """</div>
-                <div class="score-label">Score Apres</div>
+                <div class="score-label">Score Après</div>
             </div>
             <div class="score-box imp">
                 <div class="score-value">""" + imp_text + """</div>
@@ -582,11 +575,11 @@ def generate_html_report(report_data: dict) -> str:
         <div class="metrics">
             <div class="metric">
                 <div class="metric-value">""" + str(original.get("lines", 0)) + """</div>
-                <div class="metric-label">Lignes</div>
+                <div class="metric-label">Nb de lignes</div>
             </div>
             <div class="metric">
                 <div class="metric-value">""" + str(original.get("code_lines", 0)) + """</div>
-                <div class="metric-label">Code</div>
+                <div class="metric-label">Nb de lignes (code seulement)</div>
             </div>
             <div class="metric">
                 <div class="metric-value">""" + str(len(functions)) + """</div>
@@ -598,12 +591,9 @@ def generate_html_report(report_data: dict) -> str:
             </div>
             <div class="metric">
                 <div class="metric-value">""" + str(original.get("avg_complexity", 0)) + """</div>
-                <div class="metric-label">Complexite</div>
+                <div class="metric-label">Complexité</div>
             </div>
-            <div class="metric">
-                <div class="metric-value">""" + str(original.get("doc_coverage", 0)) + """%</div>
-                <div class="metric-label">Doc</div>
-            </div>
+            
         </div>
         
         <div class="status-bar">
@@ -621,7 +611,7 @@ def generate_html_report(report_data: dict) -> str:
         </div>
         
         <div class="footer">
-            Rapport genere par AgentIA Code Standardizer
+            Rapport généré par AgentIA Code Standardizer
         </div>
     </div>
     
@@ -637,7 +627,7 @@ def generate_html_report(report_data: dict) -> str:
 
 
 def generate_global_report(files_data: list, job_id: str) -> str:
-    """Genere un rapport global pour tous les fichiers."""
+    """Génère un rapport global pour tous les fichiers."""
     
     total_files = len(files_data)
     if total_files == 0:
@@ -735,7 +725,7 @@ def generate_global_report(files_data: list, job_id: str) -> str:
             </div>
             <div class="stat">
                 <div class="stat-value" style="color:#22c55e">+""" + str(avg_improvement) + """</div>
-                <div class="stat-label">Amelioration moy.</div>
+                <div class="stat-label">Amélioration moy.</div>
             </div>
             <div class="stat">
                 <div class="stat-value">""" + str(total_files) + """</div>
@@ -751,10 +741,10 @@ def generate_global_report(files_data: list, job_id: str) -> str:
             </div>
         </div>
         <div class="content">
-            <h2>Details par fichier</h2>
+            <h2>Détails par fichier</h2>
             <table>
                 <thead>
-                    <tr><th>Fichier</th><th>Avant</th><th>Apres</th><th>+/-</th><th>Fonctions</th><th>Classes</th><th>Problemes</th></tr>
+                    <tr><th>Fichier</th><th>Avant</th><th>Après</th><th>+/-</th><th>Fonctions</th><th>Classes</th><th>Problèmes</th></tr>
                 </thead>
                 <tbody>""" + files_rows + """</tbody>
             </table>
