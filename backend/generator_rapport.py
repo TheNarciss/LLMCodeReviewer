@@ -611,7 +611,7 @@ def generate_html_report(report_data: dict) -> str:
         </div>
         
         <div class="footer">
-            Rapport généré par AgentIA Code Standardizer
+            Rapport généré par IA
         </div>
     </div>
     

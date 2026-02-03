@@ -1,6 +1,6 @@
 """
 API Backend - AgentIA Code Standardizer
-Version avec injection chirurgicale de Docstrings (AST)
+Version Clean : Stockage temporaire et auto-nettoyage après téléchargement.
 """
 
 import os
@@ -11,19 +11,16 @@ import tempfile
 import subprocess
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from utils import list_python_files, read_file, write_file, get_relative_path
 from analyser import analyze_file, analyze_code_string, calculate_quality_score
 from corrector import correct_code
-
-# CHANGEMENT ICI : On importe la nouvelle fonction intelligente
 from generator_docstring import add_docstrings_smartly
-
 from generator_rapport import generate_report_data, generate_html_report, generate_global_report
 from dependency_graph import analyze_file_dependencies, analyze_project_dependencies, generate_interactive_graph_html
 from llm_service import get_backend_info
@@ -35,19 +32,24 @@ class GitHubImportRequest(BaseModel):
     token: Optional[str] = None
     branch: Optional[str] = "main"
 
-# Configuration
-BASE_DIR = Path(__file__).parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "outputs"
-FRONTEND_DIR = BASE_DIR / "frontend"
+# --- CONFIGURATION DU STOCKAGE TEMPORAIRE ---
+# On utilise le dossier temporaire du système d'exploitation pour ne pas polluer le projet
+SYSTEM_TEMP_DIR = Path(tempfile.gettempdir())
+UPLOAD_DIR = SYSTEM_TEMP_DIR / "agentia_uploads"
+OUTPUT_DIR = SYSTEM_TEMP_DIR / "agentia_outputs"
 
+# On s'assure que les dossiers racines existent dans /tmp
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Pour servir le frontend (inchangé)
+BASE_DIR = Path(__file__).parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 app = FastAPI(
     title="AgentIA Code Standardizer",
     description="Analyse, corrige et documente automatiquement du code Python",
-    version="2.1.0"
+    version="2.2.0"
 )
 
 app.add_middleware(
@@ -59,6 +61,32 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+# --- FONCTION DE NETTOYAGE ---
+def cleanup_job_data(job_id: str):
+    """
+    Supprime définitivement les fichiers d'entrée et de sortie pour un job donné.
+    Appelé automatiquement après le téléchargement.
+    """
+    try:
+        # Supprimer le dossier d'upload
+        upload_path = UPLOAD_DIR / job_id
+        if upload_path.exists():
+            shutil.rmtree(upload_path)
+            
+        # Supprimer le dossier de sortie
+        output_path = OUTPUT_DIR / job_id
+        if output_path.exists():
+            shutil.rmtree(output_path)
+            
+        # Supprimer le zip temporaire s'il existe
+        zip_path = OUTPUT_DIR / f"{job_id}_processed.zip"
+        if zip_path.exists():
+            os.remove(zip_path)
+            
+        print(f"🧹 [CLEANUP] Données du job {job_id} supprimées avec succès.")
+    except Exception as e:
+        print(f"⚠️ [CLEANUP] Erreur lors de la suppression du job {job_id}: {e}")
 
 
 @app.get("/")
@@ -77,6 +105,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
     job_id = str(uuid.uuid4())[:8]
     job_upload_dir = UPLOAD_DIR / job_id
     
+    # Nettoyage préventif
     if job_upload_dir.exists():
         shutil.rmtree(job_upload_dir)
     job_upload_dir.mkdir(parents=True, exist_ok=True)
@@ -113,24 +142,21 @@ async def upload_files(files: list[UploadFile] = File(...)):
 async def import_from_github(request: GitHubImportRequest):
     """Clone un repository GitHub et prépare les fichiers pour analyse."""
     
-    # Valider l'URL
     url = request.url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="URL du repository requise")
     
-    # Extraire owner/repo depuis l'URL
     url_clean = url.replace("https://", "").replace("http://", "").replace("github.com/", "")
     url_clean = url_clean.rstrip("/").rstrip(".git")
     
     parts = url_clean.split("/")
     if len(parts) < 2:
-        raise HTTPException(status_code=400, detail="URL invalide. Format attendu: https://github.com/owner/repo")
+        raise HTTPException(status_code=400, detail="URL invalide.")
     
     owner = parts[0]
     repo = parts[1]
     branch = request.branch or "main"
     
-    # Créer un job_id
     job_id = str(uuid.uuid4())[:8]
     job_upload_dir = UPLOAD_DIR / job_id
     
@@ -139,13 +165,11 @@ async def import_from_github(request: GitHubImportRequest):
     job_upload_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # Construire l'URL de clone
         if request.token:
             clone_url = f"https://{request.token}@github.com/{owner}/{repo}.git"
         else:
             clone_url = f"https://github.com/{owner}/{repo}.git"
         
-        # Cloner le repository
         result = subprocess.run(
             ["git", "clone", "--depth", "1", "--branch", branch, clone_url, str(job_upload_dir)],
             capture_output=True,
@@ -154,13 +178,13 @@ async def import_from_github(request: GitHubImportRequest):
         )
         
         if result.returncode != 0:
-            if "not found" in result.stderr.lower() or "could not find" in result.stderr.lower():
-                result = subprocess.run(
-                    ["git", "clone", "--depth", "1", clone_url, str(job_upload_dir)],
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
+            # Retry without branch
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", clone_url, str(job_upload_dir)],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
             
             if result.returncode != 0:
                 error_msg = result.stderr or "Erreur inconnue lors du clone"
@@ -175,7 +199,7 @@ async def import_from_github(request: GitHubImportRequest):
         python_files = list_python_files(str(job_upload_dir))
         
         if not python_files:
-            raise HTTPException(status_code=400, detail="Aucun fichier Python trouvé dans ce repository")
+            raise HTTPException(status_code=400, detail="Aucun fichier Python trouvé")
         
         uploaded_files = []
         for py_file in python_files:
@@ -193,26 +217,20 @@ async def import_from_github(request: GitHubImportRequest):
         
     except subprocess.TimeoutExpired:
         shutil.rmtree(job_upload_dir, ignore_errors=True)
-        raise HTTPException(status_code=408, detail="Timeout: le clonage a pris trop de temps")
-    except HTTPException:
-        raise
+        raise HTTPException(status_code=408, detail="Timeout clone")
     except Exception as e:
         shutil.rmtree(job_upload_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"Erreur inattendue: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
 @app.get("/api/analyze/{job_id}")
 async def analyze_job(job_id: str):
-    """Analyse tous les fichiers d'un job."""
     job_dir = UPLOAD_DIR / job_id
     
     if not job_dir.exists():
-        raise HTTPException(status_code=404, detail="Job non trouve")
+        raise HTTPException(status_code=404, detail="Job expiré ou introuvable")
     
     python_files = list_python_files(str(job_dir))
-    
-    if not python_files:
-        raise HTTPException(status_code=404, detail="Aucun fichier Python trouve")
     
     results = []
     total_score = 0
@@ -256,13 +274,6 @@ async def process_job(
     api_key: str = "",
     api_model: str = "gpt-4"
 ):
-    """
-    Traite les fichiers et genere:
-    - fichier.py (code corrige)
-    - fichier_rapport.html (analyse + doc + profiling)
-    - fichier_graph.html (si dependency_graph=True)
-    """
-    # Configuration IA temporaire pour ce job
     import llm_service
     original_config = {
         'LLM_API_URL': llm_service.LLM_API_URL,
@@ -270,7 +281,6 @@ async def process_job(
         'LLM_MODEL': llm_service.LLM_MODEL
     }
     
-    # Appliquer la configuration IA choisie
     if ai_type == "api" and api_url and api_key:
         llm_service.LLM_API_URL = api_url
         llm_service.LLM_API_TOKEN = api_key
@@ -284,10 +294,8 @@ async def process_job(
         job_upload_dir = UPLOAD_DIR / job_id
         job_output_dir = OUTPUT_DIR / job_id
         
-        print(f"[PROCESS] Job {job_id} - PEP8:{pep8} Docstrings:{docstrings} Profiling:{profiling} Graph:{dependency_graph} AI:{ai_type}")
-        
         if not job_upload_dir.exists():
-            raise HTTPException(status_code=404, detail="Job non trouve")
+            raise HTTPException(status_code=404, detail="Job introuvable")
         
         if job_output_dir.exists():
             shutil.rmtree(job_output_dir)
@@ -305,61 +313,45 @@ async def process_job(
             print(f"[PROCESS] {relative}")
             
             try:
-                # 1. Lecture du code original
                 original_code = read_file(filepath)
                 final_code = original_code
                 
-                # 2. Correction PEP8 (en mémoire)
                 if pep8:
                     final_code = correct_code(final_code)
                 
-                # 3. Écriture du fichier "propre" sur le disque
-                # C'est nécessaire pour que l'AST puisse travailler sur le fichier physique
+                # Sauvegarde intermédiaire pour l'AST
                 with open(output_path, 'w', encoding='utf-8') as f:
                     f.write(final_code)
                 
                 has_docstrings = False
-                
-                # 4. Injection chirurgicale des Docstrings (sur le fichier disque)
                 if docstrings:
                     try:
-                        print(f"[PROCESS] Injection docstrings pour {relative}...")
-                        # On passe le CHEMIN du fichier, pas le contenu
                         doc_success = add_docstrings_smartly(str(output_path))
                         if doc_success:
                             has_docstrings = True
-                            # IMPORTANT : On relit le fichier modifié pour avoir la version finale
-                            # pour le rapport et la doc markdown
                             with open(output_path, 'r', encoding='utf-8') as f:
                                 final_code = f.read()
                     except Exception as e:
-                        print(f"[PROCESS] Erreur docstrings: {e}")
+                        print(f"Erreur docstrings: {e}")
 
-                # 5. Génération documentation Markdown (basé sur le code final relu)
                 if generate_markdown:
                     try:
-                        print(f"[PROCESS] Génération documentation pour {relative}...")
                         from generator_documentation import generate_markdown_doc
-                        
                         md_content = generate_markdown_doc(final_code, relative)
-                        
                         md_path = output_path.parent / (output_path.stem + "_DOC.md")
                         with open(md_path, 'w', encoding='utf-8') as f:
                             f.write(md_content)
-                            
                     except Exception as e:
-                        print(f"[PROCESS] Erreur documentation: {e}")
+                        print(f"Erreur doc MD: {e}")
                 
-                # 6. Profiling (optionnel)
                 profile_data = None
                 if profiling:
                     try:
                         from profiler import profile_code
                         profile_data = profile_code(final_code, relative)
-                    except Exception as e:
-                        print(f"[PROCESS] Erreur profiling: {e}")
+                    except Exception:
+                        pass
                 
-                # 7. Generer les donnees du rapport
                 report_data = generate_report_data(
                     filepath, original_code, final_code, 
                     has_docstrings=has_docstrings,
@@ -367,13 +359,11 @@ async def process_job(
                 )
                 reports_data.append(report_data)
                 
-                # Generer le rapport HTML unifie
                 report_html = generate_html_report(report_data)
                 report_path = output_path.parent / (output_path.stem + "_rapport.html")
                 with open(report_path, 'w', encoding='utf-8') as f:
                     f.write(report_html)
                 
-                # Graphe de dependances
                 has_graph = False
                 if dependency_graph:
                     try:
@@ -383,10 +373,8 @@ async def process_job(
                         with open(graph_path, 'w', encoding='utf-8') as f:
                             f.write(graph_html)
                         has_graph = True
-                    except Exception as e:
-                        print(f"[PROCESS] Erreur graphe: {e}")
-                
-                print(f"[PROCESS] Score: {report_data['score_before']} -> {report_data['score_after']}")
+                    except Exception:
+                        pass
                 
                 processed.append({
                     "file": relative,
@@ -399,29 +387,21 @@ async def process_job(
                 })
                 
             except Exception as e:
-                print(f"[PROCESS] Erreur fichier {relative}: {e}")
-                import traceback
-                traceback.print_exc()
-                processed.append({
-                    "file": relative,
-                    "status": "error",
-                    "error": str(e)
-                })
+                print(f"Erreur fichier {relative}: {e}")
+                processed.append({"file": relative, "status": "error", "error": str(e)})
     
-        # Rapport global
         global_report = generate_global_report(reports_data, job_id)
         with open(job_output_dir / "_rapport_global.html", 'w', encoding='utf-8') as f:
             f.write(global_report)
         
-        # Graphe projet
         if dependency_graph and len(python_files) > 1:
             try:
                 project_graph = analyze_project_dependencies(str(job_output_dir))
                 project_graph_html = generate_interactive_graph_html(project_graph, f"Projet - {job_id}")
                 with open(job_output_dir / "_project_graph.html", 'w', encoding='utf-8') as f:
                     f.write(project_graph_html)
-            except Exception as e:
-                print(f"[PROCESS] Erreur graphe projet: {e}")
+            except Exception:
+                pass
         
         return {"job_id": job_id, "processed": processed, "count": len(processed)}
         
@@ -433,7 +413,6 @@ async def process_job(
 
 @app.get("/api/preview/{job_id}/{filename:path}")
 async def preview_file(job_id: str, filename: str):
-    """Previsualise un fichier."""
     original_path = UPLOAD_DIR / job_id / filename
     corrected_path = OUTPUT_DIR / job_id / filename
     
@@ -450,106 +429,93 @@ async def preview_file(job_id: str, filename: str):
         result["score_after"] = calculate_quality_score(analysis)
     
     if not result["original"] and not result["corrected"]:
-        raise HTTPException(status_code=404, detail="Fichier non trouve")
+        raise HTTPException(status_code=404, detail="Fichier non trouvé (peut-être supprimé ?)")
     
     return result
 
 
 @app.get("/api/report/{job_id}/{filename:path}")
 async def get_file_report(job_id: str, filename: str):
-    """Recupere le rapport HTML d'un fichier."""
     report_filename = filename.rsplit('.', 1)[0] + '_rapport.html'
     report_path = OUTPUT_DIR / job_id / report_filename
     
     if not report_path.exists():
-        raise HTTPException(status_code=404, detail="Rapport non trouve")
+        raise HTTPException(status_code=404, detail="Rapport introuvable")
     
     return HTMLResponse(content=read_file(str(report_path)))
 
 
 @app.get("/api/report/{job_id}")
 async def get_global_report(job_id: str):
-    """Recupere le rapport global."""
     report_path = OUTPUT_DIR / job_id / "_rapport_global.html"
-    
     if not report_path.exists():
-        raise HTTPException(status_code=404, detail="Rapport global non trouve")
-    
+        raise HTTPException(status_code=404, detail="Rapport global introuvable")
     return HTMLResponse(content=read_file(str(report_path)))
 
 
 @app.get("/api/graph/{job_id}/{filename:path}")
 async def get_file_graph(job_id: str, filename: str):
-    """Recupere le graphe d'un fichier."""
     graph_filename = filename.rsplit('.', 1)[0] + '_graph.html'
     graph_path = OUTPUT_DIR / job_id / graph_filename
-    
     if not graph_path.exists():
-        raise HTTPException(status_code=404, detail="Graphe non trouve")
-    
+        raise HTTPException(status_code=404, detail="Graphe introuvable")
     return HTMLResponse(content=read_file(str(graph_path)))
 
 
 @app.get("/api/graph/{job_id}")
 async def get_project_graph(job_id: str):
-    """Recupere le graphe du projet."""
     graph_path = OUTPUT_DIR / job_id / "_project_graph.html"
-    
     if not graph_path.exists():
-        raise HTTPException(status_code=404, detail="Graphe projet non trouve")
-    
+        raise HTTPException(status_code=404, detail="Graphe projet introuvable")
     return HTMLResponse(content=read_file(str(graph_path)))
 
 
 @app.get("/api/download/{job_id}")
-async def download_job(job_id: str):
-    """Telecharge les fichiers traites en ZIP."""
+async def download_job(job_id: str, background_tasks: BackgroundTasks):
+    """
+    Télécharge les fichiers et SUPPRIME TOUT (nettoyage) après l'envoi.
+    """
     job_output_dir = OUTPUT_DIR / job_id
     
     if not job_output_dir.exists():
-        raise HTTPException(status_code=404, detail="Aucun fichier traite")
+        raise HTTPException(status_code=404, detail="Fichiers expirés ou introuvables")
     
     files_to_zip = [f for f in job_output_dir.rglob("*") if f.is_file()]
     
     if not files_to_zip:
-        raise HTTPException(status_code=404, detail="Aucun fichier")
+        raise HTTPException(status_code=404, detail="Dossier vide")
     
+    # Création du ZIP dans le dossier temporaire général (pas dans le job_id qui va être suppr)
     zip_path = OUTPUT_DIR / f"{job_id}_processed.zip"
     
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for filepath in files_to_zip:
             zipf.write(filepath, filepath.relative_to(job_output_dir))
     
-    return FileResponse(path=str(zip_path), filename=f"agentia_{job_id}.zip", media_type="application/zip")
+    # AJOUT DE LA TÂCHE DE FOND : Nettoyage après envoi
+    background_tasks.add_task(cleanup_job_data, job_id)
+    
+    return FileResponse(
+        path=str(zip_path), 
+        filename=f"agentia_{job_id}.zip", 
+        media_type="application/zip"
+    )
 
 
 @app.delete("/api/job/{job_id}")
 async def delete_job(job_id: str):
-    """Supprime les fichiers d'un job."""
-    for base_dir in [UPLOAD_DIR, OUTPUT_DIR]:
-        job_dir = base_dir / job_id
-        if job_dir.exists():
-            shutil.rmtree(job_dir)
-    
-    zip_path = OUTPUT_DIR / f"{job_id}_processed.zip"
-    if zip_path.exists():
-        os.remove(zip_path)
-    
+    """Suppression manuelle."""
+    cleanup_job_data(job_id)
     return {"status": "deleted", "job_id": job_id}
+
 
 @app.get("/api/download/{job_id}/{filename:path}")
 async def download_single_file(job_id: str, filename: str):
-    """Telecharge un fichier individuel traite."""
     file_path = OUTPUT_DIR / job_id / filename
-    
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Fichier non trouve")
-        
-    return FileResponse(
-        path=str(file_path), 
-        filename=filename, 
-        media_type="application/octet-stream"
-    )
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+    return FileResponse(path=str(file_path), filename=filename, media_type="application/octet-stream")
+
 
 if __name__ == "__main__":
     import uvicorn
