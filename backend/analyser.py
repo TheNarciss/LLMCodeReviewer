@@ -181,7 +181,7 @@ def extract_imports(tree):
 
 
 def extract_classes(tree):
-    """Extrait les classes avec leurs details."""
+    """Extrait les classes avec leurs details complets."""
     classes = []
     
     for node in ast.walk(tree):
@@ -198,14 +198,50 @@ def extract_classes(tree):
             
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # Extraction des arguments avec types
+                    args = []
+                    for arg in item.args.args:
+                        if arg.arg == 'self' or arg.arg == 'cls':
+                            continue
+                        arg_info = {"name": arg.arg}
+                        if arg.annotation:
+                            arg_info["type"] = ast.unparse(arg.annotation)
+                        args.append(arg_info)
+                    
+                    # Extraction du type de retour
+                    return_type = None
+                    if item.returns:
+                        return_type = ast.unparse(item.returns)
+                    
+                    # Extraction de la docstring
+                    docstring = ast.get_docstring(item)
+                    
+                    # Extraction des appels internes
+                    calls = []
+                    for subnode in ast.walk(item):
+                        if isinstance(subnode, ast.Call):
+                            if isinstance(subnode.func, ast.Name):
+                                calls.append(subnode.func.id)
+                            elif isinstance(subnode.func, ast.Attribute):
+                                calls.append(subnode.func.attr)
+                    
+                    end_line = getattr(item, 'end_lineno', item.lineno)
+                    
                     method_info = {
                         "name": item.name,
-                        "args": [arg.arg for arg in item.args.args if arg.arg != 'self'],
+                        "args": args,
+                        "arg_count": len(args),
+                        "return_type": return_type,
                         "line": item.lineno,
+                        "end_line": end_line,
+                        "lines": end_line - item.lineno + 1,
                         "is_private": item.name.startswith('_') and not item.name.startswith('__'),
                         "is_magic": item.name.startswith('__') and item.name.endswith('__'),
-                        "has_docstring": ast.get_docstring(item) is not None,
-                        "complexity": calculate_complexity(item)
+                        "is_async": isinstance(item, ast.AsyncFunctionDef),
+                        "has_docstring": docstring is not None,
+                        "docstring": docstring[:300] if docstring else None,
+                        "complexity": calculate_complexity(item),
+                        "calls": list(set(calls))
                     }
                     methods.append(method_info)
                 
@@ -213,6 +249,13 @@ def extract_classes(tree):
                     for target in item.targets:
                         if isinstance(target, ast.Name):
                             attributes.append(target.id)
+                elif isinstance(item, ast.AnnAssign) and item.target:
+                    if isinstance(item.target, ast.Name):
+                        attr_type = ast.unparse(item.annotation) if item.annotation else None
+                        attributes.append({
+                            "name": item.target.id,
+                            "type": attr_type
+                        })
             
             docstring = ast.get_docstring(node)
             

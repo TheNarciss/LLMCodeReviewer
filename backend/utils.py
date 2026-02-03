@@ -54,6 +54,8 @@ def get_relative_path(filepath: str, base: str) -> str:
     """Retourne le chemin relatif d'un fichier par rapport à un dossier de base."""
     return os.path.relpath(filepath, base)
 
+
+def get_percent_color(percent: float) -> str:
     """Retourne une couleur selon le pourcentage de temps."""
     if percent < 5:
         return "#22c55e"  # Vert

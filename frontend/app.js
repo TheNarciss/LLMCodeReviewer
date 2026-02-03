@@ -72,12 +72,14 @@ const el = {
     fileSelector: $('#file-selector'),
     previewCode: $('#preview-code'),
     previewReport: $('#preview-report'),
+    previewDoc: $('#preview-doc'),
     previewGraph: $('#preview-graph'),
     codeOriginal: $('#code-original'),
     codeCorrected: $('#code-corrected'),
     scoreBefore: $('#score-before'),
     scoreAfter: $('#score-after'),
     iframeReport: $('#iframe-report'),
+    iframeDoc: $('#iframe-doc'),
     iframeGraph: $('#iframe-graph'),
     
     cardResults: $('#card-results'),
@@ -152,6 +154,7 @@ const api = {
     },
     
     reportUrl: (jobId, filename) => filename ? '/api/report/' + jobId + '/' + filename : '/api/report/' + jobId,
+    docUrl: (jobId, filename) => '/api/doc/' + jobId + '/' + filename,
     graphUrl: (jobId, filename) => filename ? '/api/graph/' + jobId + '/' + filename : '/api/graph/' + jobId,
     downloadUrl: jobId => '/api/download/' + jobId,
     downloadFile: (jobId, filename) => '/api/download/' + jobId + '/' + filename
@@ -299,6 +302,7 @@ async function selectFile(filename) {
         if (preview.score_after !== null) el.scoreAfter.textContent = preview.score_after;
         
         el.iframeReport.src = api.reportUrl(state.jobId, filename);
+        el.iframeDoc.src = api.docUrl(state.jobId, filename);
         el.iframeGraph.src = api.graphUrl(state.jobId, filename);
     } catch (err) {
         console.error('Preview error:', err);
@@ -310,6 +314,7 @@ function switchTab(tab) {
     $$('.preview-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     el.previewCode.hidden = tab !== 'code';
     el.previewReport.hidden = tab !== 'report';
+    el.previewDoc.hidden = tab !== 'doc';
     el.previewGraph.hidden = tab !== 'graph';
 }
 

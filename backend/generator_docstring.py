@@ -1,4 +1,5 @@
 import ast
+import re
 import logging
 from llm_service import generate
 
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 def clean_file_content(file_path: str) -> bool:
     """
     Nettoie le fichier avant traitement :
-    1. Supprime TOUTES les docstrings existantes (Module, Classe, Fonction).
+    1. Supprime les docstrings existantes (via AST).
     2. Supprime les lignes de commentaires purs (via Regex).
     """
     print(f"🧹 Nettoyage préliminaire de : {file_path}")
@@ -29,7 +30,6 @@ def clean_file_content(file_path: str) -> bool:
         # --- ÉTAPE 1 : Suppression des Docstrings ---
         docstrings_to_remove = []
         
-        # On parcourt tout, y compris le module (racine)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
                 # Vérifie si le premier nœud du corps est une expression (string) = docstring
@@ -43,16 +43,19 @@ def clean_file_content(file_path: str) -> bool:
                     elif isinstance(doc_node.value, ast.Str):
                         docstrings_to_remove.append(doc_node)
 
-        # Tri inversé pour suppression sans décalage
+        # On trie du bas vers le haut pour ne pas décaler les lignes lors de la suppression
         docstrings_to_remove.sort(key=lambda x: x.lineno, reverse=True)
         
         for doc_node in docstrings_to_remove:
             start = doc_node.lineno - 1
+            # end_lineno existe depuis Python 3.8
             end = getattr(doc_node, 'end_lineno', start + 1)
+            
+            # On supprime les lignes concernées
             del source_lines[start:end]
             # print(f"   🗑️  Docstring supprimée (Lignes {start+1}-{end})")
 
-        # --- ÉTAPE 2 : Suppression des commentaires purs ---
+        # --- ÉTAPE 2 : Suppression des commentaires purs (# ...) ---
         cleaned_lines = []
         for line in source_lines:
             stripped = line.strip()
@@ -62,6 +65,7 @@ def clean_file_content(file_path: str) -> bool:
         
         source_lines = cleaned_lines
 
+        # Sauvegarde du fichier propre
         with open(file_path, 'w', encoding='utf-8') as f:
             f.writelines(source_lines)
             
@@ -71,39 +75,51 @@ def clean_file_content(file_path: str) -> bool:
         print(f"❌ Erreur lors du nettoyage : {e}")
         return False
 
-def generate_single_docstring(source_code: str, context_type: str = "function") -> str:
-    """
-    Génère une docstring adaptée au contexte (Module, Classe ou Fonction).
-    """
-    if context_type == "module":
-        prompt = f"""Génère une docstring de MODULE Python (tout en haut du fichier).
-Décris globalement ce que fait ce fichier.
-Règles :
-1. Retourne UNIQUEMENT la docstring (entre triple guillemets).
-2. Sois concis et professionnel (Google Style).
+def generate_single_docstring(source_code: str) -> str:
+    """Demande au LLM de générer une docstring structurée."""
+    
+    prompt = f"""Tu es un expert en documentation Python (PEP 257).
+Génère une docstring au format "Google Style" pour le code ci-dessous.
 
-Code du fichier :
-{source_code[:2000]}... (tronqué)
-"""
-    else:
-        prompt = f"""Génère une docstring Python (Google Style) pour cette {context_type}.
-Règles :
-1. Retourne UNIQUEMENT la docstring (entre triple guillemets).
-2. Sois concis (Args, Returns si applicable).
+Structure OBLIGATOIRE :
+1. Description : Une phrase concise expliquant à quoi sert la fonction/classe.
+2. Args : (Si applicable) Liste des arguments avec leur type et description.
+3. Returns : (Si applicable) Type et description de ce qui est retourné.
+4. Raises : (Si applicable) Liste des erreurs explicites levées.
 
-Code :
+Exemple de format attendu :
+\"\"\"
+Calcule la racine carrée d'un nombre.
+
+Args:
+    x (float): Le nombre positif.
+
+Returns:
+    float: La racine carrée.
+
+Raises:
+    ValueError: Si x est négatif.
+\"\"\"
+
+Règles strictes :
+- Retourne UNIQUEMENT la docstring (entre triple guillemets).
+- Pas de texte avant ou après (pas de "Voici la docstring").
+- Ne pas inventer d'arguments qui n'existent pas.
+
+Code à documenter :
 {source_code}
 """
-
     try:
         response = generate(prompt)
         if not response: return ""
 
         cleaned = response.strip()
+        # Nettoyage des balises markdown si le LLM en met
         if "```" in cleaned:
             cleaned = cleaned.replace("```python", "").replace("```", "")
         
         cleaned = cleaned.strip()
+        # Ajout des quotes si manquantes
         if not (cleaned.startswith('"""') or cleaned.startswith("'''")):
             cleaned = f'"""\n{cleaned}\n"""'
             
@@ -114,16 +130,18 @@ Code :
 
 def add_docstrings_smartly(file_path: str) -> bool:
     """
-    Pipeline complet : Nettoyage -> AST -> Génération -> Injection.
+    1. Nettoie le fichier (supprime vieux docs & commentaires).
+    2. Injecte les nouvelles docstrings via AST.
     """
     
-    # 1. Nettoyage
+    # 1. D'abord, on fait le ménage !
     if not clean_file_content(file_path):
-        print("⚠️ Le nettoyage a échoué.")
+        print("⚠️ Le nettoyage a échoué, on continue sur le fichier tel quel.")
     
-    print(f"🚀 Génération des docstrings pour : {file_path}")
+    print(f"🚀 Démarrage de la génération pour : {file_path}")
     
     try:
+        # Re-lecture du fichier nettoyé
         with open(file_path, 'r', encoding='utf-8') as f:
             source_lines = f.readlines()
         
@@ -132,60 +150,50 @@ def add_docstrings_smartly(file_path: str) -> bool:
         
         nodes_to_document = []
         
-        # 2. On repère Fonctions et Classes
+        # On prend TOUTES les fonctions et classes
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 nodes_to_document.append(node)
 
-        # Tri inversé (pour insérer du bas vers le haut)
+        # Tri inversé (bas vers haut) pour ne pas casser les index de ligne lors de l'insertion
         nodes_to_document.sort(key=lambda x: x.lineno, reverse=True)
         
+        print(f"📝 {len(nodes_to_document)} éléments à documenter.")
         changes_made = False
 
-        # 3. Traitement des Fonctions et Classes
         for node in nodes_to_document:
-            is_class = isinstance(node, ast.ClassDef)
-            type_str = "classe" if is_class else "fonction"
-            print(f"   🤖 Génération ({type_str}) : '{node.name}'...")
+            print(f"   🤖 Génération pour '{node.name}'...")
             
-            # Extraction du code
+            # Extraction du code de l'élément pour le contexte du LLM
             if hasattr(node, 'end_lineno') and node.end_lineno:
                 func_lines = source_lines[node.lineno-1 : node.end_lineno]
             else:
-                func_lines = source_lines[node.lineno-1 : node.lineno+15]
+                func_lines = source_lines[node.lineno-1 : node.lineno+10]
 
             func_source = "".join(func_lines)
-            docstring = generate_single_docstring(func_source, context_type=type_str)
+            docstring = generate_single_docstring(func_source)
             
             if docstring:
-                # Indentation
+                # Calcul de l'indentation correcte
                 def_line = source_lines[node.lineno - 1]
                 indent_str = def_line[:len(def_line) - len(def_line.lstrip())]
                 doc_indent = indent_str + "    "
                 
+                # Formatage de chaque ligne de la docstring
                 formatted_lines = [f"{doc_indent}{line}\n" for line in docstring.split('\n')]
                 
-                # Insertion après la définition
+                # Insertion après la ligne de définition
                 insert_pos = node.body[0].lineno - 1
+                
                 for line in reversed(formatted_lines):
                     source_lines.insert(insert_pos, line)
+                
                 changes_made = True
-
-        # 4. Traitement du MODULE (Tout en haut)
-        print(f"   🤖 Génération (Module) : Entête du fichier...")
-        # On envoie un aperçu du fichier au LLM (les 100 premières lignes suffisent souvent)
-        module_preview = "".join(source_lines[:100])
-        module_doc = generate_single_docstring(module_preview, context_type="module")
-        
-        if module_doc:
-            formatted_lines = [f"{line}\n" for line in module_doc.split('\n')]
-            # Insertion tout en haut (ligne 0)
-            for line in reversed(formatted_lines):
-                source_lines.insert(0, line)
-            changes_made = True
+            else:
+                print(f"      ⚠️ Pas de réponse LLM pour '{node.name}'")
 
         if changes_made:
-            print("💾 Sauvegarde...")
+            print("💾 Sauvegarde finale...")
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.writelines(source_lines)
             return True

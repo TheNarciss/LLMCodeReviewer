@@ -1,6 +1,5 @@
 """
-Generateur de rapports HTML unifies.
-Combine: analyse, documentation, profiling dans un seul fichier.
+Generateur de rapports HTML unifies - Version Complete (Architecture + Debug + Fonctions).
 """
 
 from datetime import datetime
@@ -10,746 +9,406 @@ from analyser import analyze_file, analyze_code_string, calculate_quality_score
 
 def generate_report_data(filepath: str, original_code: str, corrected_code: str, 
                          has_docstrings: bool = False, profile_data: dict = None) -> dict:
-    """
-    Genere les donnees completes du rapport pour un fichier.
-    """
-    # Analyse du fichier original
+    """Genere les donnees completes du rapport."""
     analysis_original = analyze_file(filepath)
-    
-    # Analyse du code corrige
     analysis_corrected = analyze_code_string(corrected_code)
     
-    # Scores
     score_before = calculate_quality_score(analysis_original)
     score_after = calculate_quality_score(analysis_corrected)
     
+    functions = analysis_original.get("functions", [])
+    classes = analysis_original.get("classes", [])
+    
+    all_methods = functions + [m for c in classes for m in c.get("methods", [])]
+    total_complexity = sum(f.get("complexity", 1) for f in all_methods)
+    count_methods = len(all_methods) if all_methods else 1
+    avg_complexity = round(total_complexity / count_methods, 2)
+
     return {
         "filename": Path(filepath).name,
         "filepath": filepath,
-        "date": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        
-        # Scores
+        "date": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "score_before": score_before,
         "score_after": score_after,
-        "score": score_after,
         "improvement": score_after - score_before,
-        
-        # Donnees originales
+        "avg_complexity": avg_complexity,
+        "complexity_status": "Complexe" if avg_complexity > 10 else "Modéré" if avg_complexity > 5 else "Simple",
         "original": analysis_original,
-        
-        # Donnees corrigees  
-        "corrected": analysis_corrected,
-        
-        # Code
-        "original_code": original_code,
-        "corrected_code": corrected_code,
-        
-        # Flags
         "has_changes": original_code != corrected_code,
         "has_docstrings": has_docstrings,
-        
-        # Profiling
         "profile": profile_data,
-        
-        # Pour compatibilite
-        "functions": [f["name"] for f in analysis_original.get("functions", [])],
-        "classes": [c["name"] for c in analysis_original.get("classes", [])],
         "style_issues": analysis_original.get("style_issues", []),
-        "status_color": get_score_color(score_after)
+        "functions_list": [f["name"] for f in functions],
+        "classes_list": [c["name"] for c in classes],
     }
 
-
 def get_score_color(score):
-    if score >= 80:
-        return "#22c55e"
-    elif score >= 60:
-        return "#f59e0b"
-    else:
-        return "#ef4444"
-
+    if score >= 80: return "#22c55e"
+    elif score >= 60: return "#f59e0b"
+    return "#ef4444"
 
 def get_complexity_color(complexity):
-    if complexity <= 5:
-        return "#22c55e"
-    elif complexity <= 10:
-        return "#84cc16"
-    elif complexity <= 20:
-        return "#f59e0b"
-    else:
-        return "#ef4444"
+    if complexity <= 5: return "#22c55e"
+    elif complexity <= 10: return "#f59e0b"
+    return "#ef4444"
 
+def clean_function_name(name):
+    if name == "<module>": return "(Module Principal)"
+    if name == "<listcomp>": return "(List Comp.)"
+    return name
+
+def format_signature(func: dict) -> str:
+    """Formate la signature d'une fonction avec types."""
+    args_parts = []
+    for arg in func.get("args", []):
+        if isinstance(arg, dict):
+            if arg.get("type"):
+                args_parts.append(f'{arg["name"]}: <span class="type">{arg["type"]}</span>')
+            else:
+                args_parts.append(arg["name"])
+        else:
+            args_parts.append(str(arg))
+    
+    args_str = ", ".join(args_parts)
+    ret = func.get("return_type")
+    ret_str = f' → <span class="type">{ret}</span>' if ret else ""
+    
+    return f'({args_str}){ret_str}'
 
 def generate_html_report(report_data: dict) -> str:
-    """
-    Genere un rapport HTML unifie avec toutes les sections:
-    - Scores et metriques
-    - Documentation (classes, fonctions, imports)
-    - Profiling (si disponible)
-    - Problemes de style
-    """
+    """Genere le rapport HTML complet avec documentation détaillée."""
     original = report_data.get("original", {})
     profile = report_data.get("profile")
-    
-    score_before = report_data.get("score_before", 0)
     score_after = report_data.get("score_after", 0)
-    improvement = report_data.get("improvement", 0)
+    doc_coverage = original.get("doc_coverage", 0)
     
-    # === SECTION IMPORTS ===
-    imports = original.get("imports", [])
-    imports_html = ""
-    if imports:
-        imports_rows = ""
-        for imp in imports:
-            module = imp.get("module", "")
-            name = imp.get("name", "")
-            line = str(imp.get("line", ""))
-            if imp["type"] == "from":
-                imports_rows += "<tr><td><code>from " + module + " import " + name + "</code></td><td>" + line + "</td></tr>"
-            else:
-                imports_rows += "<tr><td><code>import " + module + "</code></td><td>" + line + "</td></tr>"
-        imports_html = """
-        <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>📦 Imports (""" + str(len(imports)) + """)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">
-                <table><thead><tr><th>Import</th><th>Ligne</th></tr></thead>
-                <tbody>""" + imports_rows + """</tbody></table>
-            </div>
+    # === DASHBOARD ===
+    dashboard_html = f"""
+    <div class="dashboard-grid">
+        <div class="dash-card">
+            <div class="dash-label">Score</div>
+            <div class="dash-value" style="color:{get_score_color(score_after)}">{score_after}/100</div>
         </div>
-        """
-    
-    # === SECTION CLASSES (DOCUMENTATION) ===
-    classes = original.get("classes", [])
+        <div class="dash-card">
+            <div class="dash-label">Complexité</div>
+            <div class="dash-value">{report_data.get('avg_complexity', 0)}</div>
+        </div>
+        <div class="dash-card">
+            <div class="dash-label">Lignes</div>
+            <div class="dash-value">{original.get('lines', 0)}</div>
+        </div>
+        <div class="dash-card">
+            <div class="dash-label">Doc Coverage</div>
+            <div class="dash-value" style="color:{get_score_color(doc_coverage)}">{doc_coverage}%</div>
+        </div>
+    </div>
+    """
+
+    # === SECTION CLASSES (Architecture) ===
     classes_html = ""
-    if classes:
+    classes_list = original.get("classes", [])
+    if classes_list:
         classes_content = ""
-        for cls in classes:
-            # Bases
+        for cls in classes_list:
+            # Héritage
             bases_str = ""
             if cls.get("bases"):
-                bases_str = "(" + ", ".join(cls["bases"]) + ")"
+                bases_str = f'<span class="inheritance">hérite de {", ".join(cls["bases"])}</span>'
             
-            # Docstring
-            doc_html = ""
-            if cls.get("docstring"):
-                doc_html = '<p class="docstring">' + cls["docstring"].replace('\n', '<br>') + '</p>'
+            # Méthodes détaillées
+            methods_html = ""
+            for m in cls.get("methods", []):
+                c_bg = get_complexity_color(m.get("complexity", 1))
+                signature = format_signature(m)
+                doc_icon = "✓" if m.get("has_docstring") else "✗"
+                doc_class = "doc-yes" if m.get("has_docstring") else "doc-no"
+                
+                # Docstring preview
+                docstring_html = ""
+                if m.get("docstring"):
+                    docstring_html = f'<div class="method-docstring">{m["docstring"]}</div>'
+                
+                methods_html += f"""
+                <div class="method-block">
+                    <div class="method-header">
+                        <code class="method-name">{m['name']}</code>
+                        <span class="method-signature">{signature}</span>
+                        <span class="complexity-badge" style="background:{c_bg}">{m.get('complexity', 1)}</span>
+                        <span class="{doc_class}">{doc_icon}</span>
+                    </div>
+                    {docstring_html}
+                </div>"""
             
             # Attributs
             attrs_html = ""
             if cls.get("attributes"):
-                attrs_html = '<div class="attrs"><strong>Attributs:</strong> ' + ", ".join(cls["attributes"]) + '</div>'
+                attrs_list = []
+                for attr in cls["attributes"]:
+                    if isinstance(attr, dict):
+                        attrs_list.append(f'{attr["name"]}: {attr.get("type", "Any")}')
+                    else:
+                        attrs_list.append(str(attr))
+                attrs_html = f'<div class="class-attrs">Attributs: {", ".join(attrs_list)}</div>'
             
-            # Methodes
-            methods_html = ""
-            for m in cls.get("methods", []):
-                complexity = m.get("complexity", 1)
-                c_color = get_complexity_color(complexity)
-                args_str = ", ".join(m.get("args", []))
-                
-                methods_html += """
-                <div class="method">
-                    <code>""" + m["name"] + """(""" + args_str + """)</code>
-                    <span class="badge" style="background:""" + c_color + """">C:""" + str(complexity) + """</span>
-                </div>
-                """
-            
-            doc_badge = ""
-                        
-            classes_content += """
-            <div class="class-card">
+            classes_content += f"""
+            <div class="class-block">
                 <div class="class-header">
-                    <h3>class """ + cls["name"] + bases_str + """</h3>
-                    """ + doc_badge + """
-                    <span class="line-info">L.""" + str(cls.get("line", "")) + """</span>
+                    <h3>class {cls['name']}</h3>
+                    {bases_str}
                 </div>
-                """ + doc_html + """
-                """ + attrs_html + """
-                <div class="methods">""" + methods_html + """</div>
+                {f'<div class="docstring">{cls.get("docstring", "")}</div>' if cls.get("docstring") else '<div class="docstring no-doc">Pas de documentation</div>'}
+                {attrs_html}
+                <div class="methods-list">{methods_html}</div>
             </div>
             """
-        
-        classes_html = """
+        classes_html = f"""
         <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>🏗️ Classes (""" + str(len(classes)) + """)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">""" + classes_content + """</div>
-        </div>
-        """
-    
-    # === SECTION FONCTIONS (DOCUMENTATION) ===
-    functions = original.get("functions", [])
+            <div class="section-header" onclick="toggleSection(this)"><h2>Classes ({len(classes_list)})</h2><span class="toggle">▼</span></div>
+            <div class="section-content">{classes_content}</div>
+        </div>"""
+
+    # === SECTION FONCTIONS GLOBALES ===
     functions_html = ""
-    if functions:
-        func_rows = ""
-        for func in functions:
-            complexity = func.get("complexity", 1)
-            c_color = get_complexity_color(complexity)
-            args_list = func.get("args", [])
-            args_str = ", ".join([a["name"] + (": " + a.get("type", "") if a.get("type") else "") for a in args_list])
-            return_type = func.get("return_type") or "-"
+    functions_list = original.get("functions", [])
+    if functions_list:
+        funcs_content = ""
+        for f in functions_list:
+            c_bg = get_complexity_color(f.get("complexity", 1))
+            signature = format_signature(f)
+            doc_icon = "✓" if f.get("has_docstring") else "✗"
+            doc_class = "doc-yes" if f.get("has_docstring") else "doc-no"
             
-            # Docstring tooltip
-            doc_preview = ""
-            if func.get("docstring"):
-                doc_preview = func["docstring"][:100].replace('"', "'")
+            # Docstring
+            docstring_html = ""
+            if f.get("docstring"):
+                docstring_html = f'<div class="func-docstring">{f["docstring"]}</div>'
             
-            func_rows += """
-            <tr title=\"""" + doc_preview + """\">
-                <td><code>""" + func["name"] + """</code></td>
-                <td class="args">""" + args_str + """</td>
-                <td>""" + return_type + """</td>
-                <td><span class="badge" style="background:""" + c_color + """">""" + str(complexity) + """</span></td>
-                <td>""" + str(func.get("lines", 0)) + """</td>
-            </tr>
-            """
-        
-        functions_html = """
-        <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>⚡ Fonctions (""" + str(len(functions)) + """)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">
-                <table>
-                    <thead><tr><th>Nom</th><th>Arguments</th><th>Retour</th><th>Complexite</th><th>Lignes</th></tr></thead>
-                    <tbody>""" + func_rows + """</tbody>
-                </table>
-            </div>
-        </div>
-        """
-    
-    # === SECTION VARIABLES ===
-    variables = original.get("variables", [])
-    constants = original.get("constants", [])
-    vars_html = ""
-    if variables or constants:
-        var_items = ""
-        for v in constants:
-            var_items += '<div class="var const"><code>' + v["name"] + '</code> = ' + str(v.get("value", ""))[:30] + '</div>'
-        for v in variables:
-            if not v.get("is_constant"):
-                var_items += '<div class="var"><code>' + v["name"] + '</code> <span class="type">' + v.get("type", "")[:20] + '</span></div>'
-        
-        vars_html = """
-        <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>📊 Variables Globales (""" + str(len(variables) + len(constants)) + """)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">
-                <div class="vars-grid">""" + var_items + """</div>
-            </div>
-        </div>
-        """
-    
-    # === SECTION PROFILING ===
-    profile_html = ""
-    if profile and profile.get("functions"):
-        profile_funcs = profile.get("functions", [])[:15]
-        total_time = profile.get("total_time", 0.001)
-        
-        profile_rows = ""
-        for pf in profile_funcs:
-            pct = (pf["cumtime"] / total_time * 100) if total_time > 0 else 0
-            color = "#22c55e" if pct < 10 else "#f59e0b" if pct < 30 else "#ef4444"
-            bar_width = min(100, pct * 2)
+            # Appels
+            calls_html = ""
+            if f.get("calls"):
+                calls_html = f'<div class="func-calls">Appelle: {", ".join(f["calls"][:5])}</div>'
             
-            profile_rows += """
-            <tr>
-                <td><code>""" + pf["name"] + """</code></td>
-                <td>""" + str(pf["ncalls"]) + """</td>
-                <td>""" + str(round(pf["cumtime"] * 1000, 2)) + """ms</td>
-                <td>
-                    <div class="bar-container">
-                        <div class="bar" style="width:""" + str(bar_width) + """%;background:""" + color + """"></div>
-                        <span>""" + str(round(pct, 1)) + """%</span>
+            async_badge = '<span class="async-badge">async</span>' if f.get("is_async") else ""
+            
+            funcs_content += f"""
+            <div class="func-block">
+                <div class="func-header">
+                    {async_badge}
+                    <code class="func-name">{f['name']}</code>
+                    <span class="func-signature">{signature}</span>
+                    <div class="func-badges">
+                        <span class="complexity-badge" style="background:{c_bg}">{f.get('complexity', 1)}</span>
+                        <span class="{doc_class}">{doc_icon}</span>
+                        <span class="lines-badge">{f.get('lines', 0)} lignes</span>
                     </div>
-                </td>
-            </tr>
+                </div>
+                {docstring_html}
+                {calls_html}
+            </div>
             """
-        
-        profile_html = """
+        functions_html = f"""
         <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>⏱️ Profiling (""" + str(round(total_time * 1000, 2)) + """ms total)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">
-                <table>
-                    <thead><tr><th>Fonction</th><th>Appels</th><th>Temps</th><th>% du total</th></tr></thead>
-                    <tbody>""" + profile_rows + """</tbody>
-                </table>
-            </div>
-        </div>
-        """
-    
-    # === SECTION PROBLEMES ===
-    style_issues = original.get("style_issues", [])
+            <div class="section-header" onclick="toggleSection(this)"><h2>Fonctions ({len(functions_list)})</h2><span class="toggle">▼</span></div>
+            <div class="section-content">{funcs_content}</div>
+        </div>"""
+
+    # === SECTION IMPORTS ===
+    imports_html = ""
+    imports_list = original.get("imports", [])
+    if imports_list:
+        tags = "".join([f'<span class="import-tag">{i["module"]}</span>' for i in imports_list])
+        imports_html = f"""
+        <div class="section collapsed">
+            <div class="section-header" onclick="toggleSection(this)"><h2>Imports ({len(imports_list)})</h2><span class="toggle">▶</span></div>
+            <div class="section-content"><div class="imports-cloud">{tags}</div></div>
+        </div>"""
+
+    # === SECTION STYLE ISSUES ===
     issues_html = ""
-    if style_issues:
-        issues_list = ""
-        for issue in style_issues[:25]:
-            issues_list += '<div class="issue">' + str(issue) + '</div>'
-        more_text = ""
-        if len(style_issues) > 25:
-            more_text = '<p class="more">... et ' + str(len(style_issues) - 25) + ' autres problemes</p>'
-        
-        issues_html = """
-        <div class="section">
-            <div class="section-header" onclick="toggleSection(this)">
-                <h2>⚠️ Problemes de Style (""" + str(len(style_issues)) + """)</h2>
-                <span class="toggle">▼</span>
-            </div>
-            <div class="section-content">
-                """ + issues_list + more_text + """
-            </div>
-        </div>
-        """
+    issues_list = report_data.get("style_issues", [])
+    if issues_list:
+        items = "".join([f'<div class="issue-item">⚠️ {i}</div>' for i in issues_list[:10]])
+        if len(issues_list) > 10: items += f'<div style="font-size:11px;color:#64748b;margin-top:5px">... et {len(issues_list)-10} autres.</div>'
+        issues_html = f"""
+        <div class="section collapsed">
+            <div class="section-header" onclick="toggleSection(this)"><h2>⚠️ Problèmes PEP8 ({len(issues_list)})</h2><span class="toggle">▶</span></div>
+            <div class="section-content">{items}</div>
+        </div>"""
+
+    # === SECTION PROFILING & LOGS ===
+    profile_html = ""
+    logs_html = ""
     
-    # === COULEURS SCORES ===
-    before_color = get_score_color(score_before)
-    after_color = get_score_color(score_after)
-    
-    if improvement > 0:
-        imp_text = "+" + str(improvement)
-        imp_bg = "#dcfce7"
-        imp_color = "#166534"
-    elif improvement == 0:
-        imp_text = "="
-        imp_bg = "#f1f5f9"
-        imp_color = "#64748b"
-    else:
-        imp_text = str(improvement)
-        imp_bg = "#fef2f2"
-        imp_color = "#991b1b"
-    
-    # === BADGES STATUT ===
-    pep8_badge = '<span class="status-badge green">PEP8 ✓</span>' if report_data.get("has_changes") else '<span class="status-badge gray">Deja conforme</span>'
-    doc_badge = '<span class="status-badge green">Docstrings IA ✓</span>' if report_data.get("has_docstrings") else '<span class="status-badge gray">Sans docstrings IA</span>'
-    
-    # === HTML FINAL ===
-    html = """<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rapport - """ + report_data["filename"] + """</title>
+    if profile:
+        # Logs
+        logs_content = ""
+        if profile.get("error"): logs_content += f'<div class="log-box error"><strong>ERREUR :</strong><pre>{profile["error"]}</pre></div>'
+        if profile.get("stderr"): logs_content += f'<div class="log-box stderr"><strong>STDERR :</strong><pre>{profile["stderr"]}</pre></div>'
+        if profile.get("stdout"): logs_content += f'<div class="log-box stdout"><strong>CONSOLE :</strong><pre>{profile["stdout"]}</pre></div>'
+            
+        if logs_content:
+            logs_html = f"""
+            <div class="section">
+                <div class="section-header" onclick="toggleSection(this)"><h2>📜 Logs d'exécution</h2><span class="toggle">▼</span></div>
+                <div class="section-content">{logs_content}</div>
+            </div>"""
+
+        # Performance Table
+        funcs = profile.get("functions", [])
+        if funcs:
+            rows = ""
+            total_time = profile.get("total_time", 0.001)
+            for pf in funcs[:15]:
+                clean_name = clean_function_name(pf["name"])
+                if "importlib" in pf.get("filename", ""): continue
+                pct = (pf["cumtime"] / total_time * 100) if total_time > 0 else 0
+                width = min(100, pct * 2)
+                rows += f"""
+                <tr>
+                    <td><code>{clean_name}</code></td>
+                    <td>{pf['ncalls']}</td>
+                    <td>{round(pf['cumtime']*1000, 2)} ms</td>
+                    <td style="width:100px"><div style="background:#e2e8f0;height:6px;border-radius:3px"><div style="width:{width}%;background:#3b82f6;height:100%"></div></div></td>
+                </tr>"""
+            
+            mem_peak = profile.get("memory_peak_mb", 0)
+            profile_html = f"""
+            <div class="section">
+                <div class="section-header" onclick="toggleSection(this)"><h2>⏱️ Profiling (RAM Pic: {mem_peak} Mo)</h2><span class="toggle">▼</span></div>
+                <div class="section-content">
+                    <table class="simple-table">
+                        <thead><tr><th>Fonction</th><th>Appels</th><th>Temps</th><th>Charge</th></tr></thead>
+                        <tbody>{rows}</tbody>
+                    </table>
+                </div>
+            </div>"""
+
+    # === HTML ASSEMBLY ===
+    style = """
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f1f5f9;
-            color: #1e293b;
-            line-height: 1.6;
-        }
-        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f8fafc; color: #1e293b; padding: 20px; margin: 0; }
+        .container { max-width: 960px; margin: 0 auto; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; padding: 28px; }
+        .header h1 { margin: 0 0 8px 0; font-size: 22px; }
+        .header p { margin: 0; opacity: 0.7; font-size: 13px; }
         
-        .header {
-            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
-            color: white;
-            padding: 32px;
-            border-radius: 16px 16px 0 0;
-            margin-bottom: 0;
-        }
-        .header h1 { font-size: 24px; margin-bottom: 6px; }
-        .header p { opacity: 0.7; font-size: 13px; }
-        
-        .scores {
-            display: flex;
-            background: white;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .score-box {
-            flex: 1;
-            padding: 24px;
-            text-align: center;
-            border-right: 1px solid #e2e8f0;
-        }
-        .score-box:last-child { border-right: none; }
-        .score-box.before { border-top: 4px solid """ + before_color + """; }
-        .score-box.after { border-top: 4px solid """ + after_color + """; }
-        .score-box.imp { border-top: 4px solid """ + imp_color + """; background: """ + imp_bg + """; }
-        .score-value { font-size: 36px; font-weight: 700; }
-        .score-box.before .score-value { color: """ + before_color + """; }
-        .score-box.after .score-value { color: """ + after_color + """; }
-        .score-box.imp .score-value { color: """ + imp_color + """; }
-        .score-label { font-size: 12px; color: #64748b; margin-top: 4px; }
-        
-        .metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 12px;
-            padding: 20px;
-            background: white;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .metric {
-            background: #f8fafc;
-            padding: 16px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        .metric-value { font-size: 24px; font-weight: 700; color: #3b82f6; }
-        .metric-label { font-size: 11px; color: #64748b; }
-        
-        .status-bar {
-            display: flex;
-            gap: 10px;
-            padding: 16px 20px;
-            background: white;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .status-badge {
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        .status-badge.green { background: #dcfce7; color: #166534; }
-        .status-badge.gray { background: #f1f5f9; color: #64748b; }
-        
-        .content {
-            background: white;
-            border-radius: 0 0 16px 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }
+        .dashboard-grid { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid #e2e8f0; }
+        .dash-card { padding: 20px; text-align: center; border-right: 1px solid #e2e8f0; }
+        .dash-card:last-child { border-right: none; }
+        .dash-value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+        .dash-label { font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
         
         .section { border-bottom: 1px solid #e2e8f0; }
-        .section:last-child { border-bottom: none; }
-        
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px 20px;
-            cursor: pointer;
-            background: #f8fafc;
-            transition: background 0.2s;
-        }
+        .section-header { padding: 16px 24px; background: #f8fafc; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.15s; }
         .section-header:hover { background: #f1f5f9; }
-        .section-header h2 { font-size: 15px; font-weight: 600; }
-        .toggle { color: #64748b; transition: transform 0.2s; }
-        .section.collapsed .toggle { transform: rotate(-90deg); }
+        .section-header h2 { margin: 0; font-size: 13px; text-transform: uppercase; color: #475569; font-weight: 600; letter-spacing: 0.5px; }
+        .section-content { padding: 20px 24px; }
         .section.collapsed .section-content { display: none; }
+        .toggle { color: #94a3b8; font-size: 12px; }
         
-        .section-content { padding: 16px 20px; }
+        /* Classes */
+        .class-block { border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; margin-bottom: 14px; background: #fafafa; }
+        .class-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+        .class-header h3 { margin: 0; font-size: 16px; color: #0f172a; font-family: 'Consolas', monospace; }
+        .inheritance { font-size: 12px; color: #6366f1; background: #eef2ff; padding: 3px 8px; border-radius: 4px; }
+        .class-attrs { font-size: 12px; color: #64748b; margin: 8px 0; padding: 8px; background: #f1f5f9; border-radius: 6px; }
         
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
-        th { background: #f8fafc; font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600; }
-        td { font-size: 13px; }
-        td.args { font-size: 11px; color: #64748b; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+        .docstring { background: #fffbeb; padding: 12px; font-size: 13px; color: #92400e; margin: 10px 0; border-radius: 6px; border-left: 3px solid #f59e0b; line-height: 1.5; }
+        .docstring.no-doc { background: #fef2f2; color: #dc2626; border-left-color: #ef4444; font-style: italic; }
         
-        code {
-            font-family: 'SF Mono', Monaco, monospace;
-            background: #f1f5f9;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
+        /* Methods */
+        .methods-list { margin-top: 12px; }
+        .method-block { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+        .method-block:last-child { border-bottom: none; }
+        .method-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .method-name { font-size: 14px; font-weight: 600; color: #0f172a; background: #e0f2fe; padding: 2px 8px; border-radius: 4px; }
+        .method-signature { font-size: 12px; color: #64748b; font-family: 'Consolas', monospace; }
+        .method-docstring { font-size: 12px; color: #64748b; margin-top: 6px; padding-left: 12px; border-left: 2px solid #e2e8f0; }
         
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: 600;
-            color: white;
-        }
-        .badge-green { background: #22c55e; }
-        .badge-gray { background: #94a3b8; }
+        /* Functions */
+        .func-block { padding: 14px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px; background: white; }
+        .func-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .func-name { font-size: 15px; font-weight: 600; color: #0f172a; background: #dcfce7; padding: 3px 10px; border-radius: 4px; }
+        .func-signature { font-size: 12px; color: #64748b; font-family: 'Consolas', monospace; flex: 1; }
+        .func-badges { display: flex; gap: 6px; align-items: center; }
+        .func-docstring { font-size: 12px; color: #475569; margin-top: 10px; padding: 10px; background: #f8fafc; border-radius: 6px; line-height: 1.5; }
+        .func-calls { font-size: 11px; color: #64748b; margin-top: 8px; }
+        .func-calls::before { content: "→ "; color: #94a3b8; }
         
-        .class-card {
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            margin-bottom: 12px;
-            overflow: hidden;
-        }
-        .class-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 16px;
-            background: #f8fafc;
-        }
-        .class-header h3 { font-size: 14px; font-weight: 600; flex: 1; }
-        .line-info { font-size: 11px; color: #94a3b8; }
-        .docstring {
-            padding: 12px 16px;
-            background: #fffbeb;
-            font-size: 12px;
-            color: #92400e;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .attrs {
-            padding: 10px 16px;
-            font-size: 12px;
-            color: #64748b;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .methods { padding: 12px 16px; }
-        .method {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 0;
-            border-bottom: 1px solid #f1f5f9;
-        }
-        .method:last-child { border-bottom: none; }
-        .method code { flex: 1; }
+        /* Badges */
+        .complexity-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; border-radius: 50%; color: white; font-weight: 600; font-size: 11px; }
+        .doc-yes { color: #22c55e; font-weight: bold; }
+        .doc-no { color: #ef4444; font-weight: bold; }
+        .lines-badge { font-size: 10px; color: #64748b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+        .async-badge { font-size: 10px; color: #8b5cf6; background: #f3e8ff; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
+        .type { color: #0891b2; font-weight: 500; }
         
-        .vars-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 8px;
-        }
-        .var {
-            background: #f8fafc;
-            padding: 10px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            display: flex;
-            justify-content: space-between;
-        }
-        .var.const { background: #fef3c7; }
-        .var .type { color: #64748b; font-size: 11px; }
+        /* Tables */
+        .simple-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .simple-table th { text-align: left; padding: 10px; color: #64748b; border-bottom: 2px solid #e2e8f0; font-weight: 500; }
+        .simple-table td { padding: 10px; border-bottom: 1px solid #f1f5f9; }
+        .simple-table tr:hover { background: #f8fafc; }
         
-        .bar-container {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .bar {
-            height: 16px;
-            border-radius: 4px;
-            min-width: 4px;
-        }
-        .bar-container span { font-size: 11px; color: #64748b; min-width: 45px; }
+        /* Logs */
+        .log-box { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; font-family: 'Consolas', monospace; font-size: 12px; margin-bottom: 12px; overflow-x: auto; }
+        .log-box pre { margin: 8px 0 0 0; white-space: pre-wrap; word-break: break-word; }
+        .log-box.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
         
-        .issue {
-            padding: 8px 12px;
-            background: #fef2f2;
-            border-left: 3px solid #ef4444;
-            margin-bottom: 4px;
-            font-size: 11px;
-            font-family: monospace;
-            color: #991b1b;
-            border-radius: 0 6px 6px 0;
-        }
-        .more { font-size: 12px; color: #64748b; margin-top: 8px; }
+        /* Imports */
+        .imports-cloud { display: flex; flex-wrap: wrap; gap: 8px; }
+        .import-tag { background: #f1f5f9; padding: 5px 10px; border-radius: 6px; font-size: 12px; border: 1px solid #e2e8f0; font-family: 'Consolas', monospace; }
         
-        .footer {
-            text-align: center;
-            padding: 20px;
-            color: #94a3b8;
-            font-size: 11px;
+        /* Issues */
+        .issue-item { padding: 8px 12px; background: #fef2f2; color: #b91c1c; font-size: 12px; margin-bottom: 6px; border-radius: 6px; font-family: 'Consolas', monospace; border-left: 3px solid #ef4444; }
+        
+        code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #0f172a; font-family: 'Consolas', monospace; font-size: 13px; }
+        
+        @media (max-width: 600px) {
+            .dashboard-grid { grid-template-columns: repeat(2, 1fr); }
+            .func-header, .method-header { flex-direction: column; align-items: flex-start; }
         }
     </style>
-</head>
+    """
+
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><title>Rapport {report_data['filename']}</title>{style}</head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>📄 """ + report_data["filename"] + """</h1>
-            <p>Rapport généré le """ + report_data["date"] + """</p>
-        </div>
-        
-        <div class="scores">
-            <div class="score-box before">
-                <div class="score-value">""" + str(score_before) + """</div>
-                <div class="score-label">Score Avant</div>
-            </div>
-            <div class="score-box after">
-                <div class="score-value">""" + str(score_after) + """</div>
-                <div class="score-label">Score Après</div>
-            </div>
-            <div class="score-box imp">
-                <div class="score-value">""" + imp_text + """</div>
-                <div class="score-label">Amelioration</div>
-            </div>
-        </div>
-        
-        <div class="metrics">
-            <div class="metric">
-                <div class="metric-value">""" + str(original.get("lines", 0)) + """</div>
-                <div class="metric-label">Nb de lignes</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">""" + str(original.get("code_lines", 0)) + """</div>
-                <div class="metric-label">Nb de lignes (code seulement)</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">""" + str(len(functions)) + """</div>
-                <div class="metric-label">Fonctions</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">""" + str(len(classes)) + """</div>
-                <div class="metric-label">Classes</div>
-            </div>
-            <div class="metric">
-                <div class="metric-value">""" + str(original.get("avg_complexity", 0)) + """</div>
-                <div class="metric-label">Complexité</div>
-            </div>
-            
-        </div>
-        
-        <div class="status-bar">
-            """ + pep8_badge + """
-            """ + doc_badge + """
-        </div>
-        
-        <div class="content">
-            """ + classes_html + """
-            """ + functions_html + """
-            """ + imports_html + """
-            """ + vars_html + """
-            """ + profile_html + """
-            """ + issues_html + """
-        </div>
-        
-        <div class="footer">
-            Rapport généré par IA
-        </div>
+        <div class="header"><h1>📄 Analyse : {report_data['filename']}</h1><p>{report_data['date']}</p></div>
+        {dashboard_html}
+        {logs_html}
+        {classes_html}
+        {functions_html}
+        {profile_html}
+        {imports_html}
+        {issues_html}
     </div>
-    
     <script>
-        function toggleSection(header) {
+        function toggleSection(header) {{
             header.parentElement.classList.toggle('collapsed');
-        }
+            header.querySelector('.toggle').textContent = header.parentElement.classList.contains('collapsed') ? '▶' : '▼';
+        }}
     </script>
 </body>
 </html>"""
-    
-    return html
 
 
 def generate_global_report(files_data: list, job_id: str) -> str:
-    """Génère un rapport global pour tous les fichiers."""
-    
-    total_files = len(files_data)
-    if total_files == 0:
-        return "<html><body>Aucun fichier</body></html>"
-    
-    total_functions = sum(len(f.get("functions", [])) for f in files_data)
-    total_classes = sum(len(f.get("classes", [])) for f in files_data)
-    total_issues = sum(len(f.get("style_issues", [])) for f in files_data)
-    avg_score = sum(f.get("score", 0) for f in files_data) // total_files
-    avg_improvement = sum(f.get("improvement", 0) for f in files_data) // total_files
-    
+    """Génère le rapport global."""
     files_rows = ""
     for f in files_data:
-        score_before = f.get("score_before", 0)
-        score_after = f.get("score_after", 0)
-        improvement = f.get("improvement", 0)
-        
-        imp_color = "#22c55e" if improvement > 0 else "#64748b"
-        imp_text = "+" + str(improvement) if improvement > 0 else str(improvement)
-        
-        files_rows += """
+        files_rows += f"""
         <tr>
-            <td><code>""" + f.get("filename", "") + """</code></td>
-            <td>""" + str(score_before) + """</td>
-            <td style="color:""" + get_score_color(score_after) + """;font-weight:600">""" + str(score_after) + """</td>
-            <td style="color:""" + imp_color + """">""" + imp_text + """</td>
-            <td>""" + str(len(f.get("functions", []))) + """</td>
-            <td>""" + str(len(f.get("classes", []))) + """</td>
-            <td>""" + str(len(f.get("style_issues", []))) + """</td>
-        </tr>
-        """
-    
-    current_date = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    
-    return """<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <title>Rapport Global - Job """ + job_id + """</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f1f5f9;
-            color: #1e293b;
-            padding: 20px;
-        }
-        .container { max-width: 1000px; margin: 0 auto; }
-        .header {
-            background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
-            color: white;
-            padding: 32px;
-            border-radius: 16px 16px 0 0;
-        }
-        .header h1 { font-size: 24px; margin-bottom: 6px; }
-        .header p { opacity: 0.7; }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            background: white;
-        }
-        .stat {
-            padding: 20px;
-            text-align: center;
-            border-right: 1px solid #e2e8f0;
-        }
-        .stat:last-child { border-right: none; }
-        .stat-value { font-size: 28px; font-weight: 700; color: #3b82f6; }
-        .stat-label { font-size: 11px; color: #64748b; margin-top: 4px; }
-        .content {
-            background: white;
-            padding: 20px;
-            border-radius: 0 0 16px 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }
-        .content h2 { font-size: 16px; margin-bottom: 16px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
-        th { background: #f8fafc; font-size: 11px; text-transform: uppercase; color: #64748b; }
-        td { font-size: 13px; }
-        code { background: #f1f5f9; padding: 4px 8px; border-radius: 4px; }
-        .footer { text-align: center; padding: 20px; color: #94a3b8; font-size: 11px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📊 Rapport Global</h1>
-            <p>Job """ + job_id + """ - """ + current_date + """</p>
-        </div>
-        <div class="stats">
-            <div class="stat">
-                <div class="stat-value">""" + str(avg_score) + """</div>
-                <div class="stat-label">Score moyen</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value" style="color:#22c55e">+""" + str(avg_improvement) + """</div>
-                <div class="stat-label">Amélioration moy.</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">""" + str(total_files) + """</div>
-                <div class="stat-label">Fichiers</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">""" + str(total_functions) + """</div>
-                <div class="stat-label">Fonctions</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">""" + str(total_classes) + """</div>
-                <div class="stat-label">Classes</div>
-            </div>
-        </div>
-        <div class="content">
-            <h2>Détails par fichier</h2>
-            <table>
-                <thead>
-                    <tr><th>Fichier</th><th>Avant</th><th>Après</th><th>+/-</th><th>Fonctions</th><th>Classes</th><th>Problèmes</th></tr>
-                </thead>
-                <tbody>""" + files_rows + """</tbody>
-            </table>
-        </div>
-        <div class="footer">AgentIA Code Standardizer</div>
-    </div>
-</body>
-</html>"""
+            <td><strong>{f.get("filename", "")}</strong></td>
+            <td>{f.get("score_after")}/100</td>
+            <td>{len(f.get("classes_list", []))}</td>
+            <td>{len(f.get("functions_list", []))}</td>
+            <td><a href="{f.get('filename', '').replace('.py', '_rapport.html')}" style="color:#3b82f6">Voir</a></td>
+        </tr>"""
+        
+    return f"""<!DOCTYPE html>
+<html lang="fr"><head><style>
+body{{font-family:system-ui;padding:20px;background:#f1f5f9}} .container{{max-width:800px;margin:0 auto;background:white;padding:30px;border-radius:12px}} table{{width:100%;border-collapse:collapse;margin-top:20px}} th{{text-align:left;padding:10px;background:#f8fafc}} td{{padding:10px;border-bottom:1px solid #f1f5f9}}
+</style></head><body><div class="container"><h1>📊 Rapport Global {job_id}</h1><table><thead><tr><th>Fichier</th><th>Score</th><th>Classes</th><th>Fonctions</th><th>Lien</th></tr></thead><tbody>{files_rows}</tbody></table></div></body></html>"""

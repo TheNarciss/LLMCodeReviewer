@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from profiler import profile_code
 from utils import list_python_files, read_file, write_file, get_relative_path
 from analyser import analyze_file, analyze_code_string, calculate_quality_score
 from corrector import correct_code
@@ -347,10 +347,9 @@ async def process_job(
                 profile_data = None
                 if profiling:
                     try:
-                        from profiler import profile_code
-                        profile_data = profile_code(final_code, relative)
-                    except Exception:
-                        pass
+                        profile_data = profile_code(final_code, str(output_path))
+                    except Exception as e:
+                        print(f"Erreur profiling: {e}")
                 
                 report_data = generate_report_data(
                     filepath, original_code, final_code, 
@@ -468,6 +467,138 @@ async def get_project_graph(job_id: str):
     if not graph_path.exists():
         raise HTTPException(status_code=404, detail="Graphe projet introuvable")
     return HTMLResponse(content=read_file(str(graph_path)))
+
+
+@app.get("/api/doc/{job_id}/{filename:path}")
+async def get_file_doc(job_id: str, filename: str):
+    """Retourne la documentation MD convertie en HTML."""
+    doc_filename = filename.rsplit('.', 1)[0] + '_DOC.md'
+    doc_path = OUTPUT_DIR / job_id / doc_filename
+    
+    if not doc_path.exists():
+        # Pas de doc générée - afficher un message
+        html = """<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>
+body { font-family: system-ui; padding: 40px; text-align: center; color: #64748b; }
+h2 { color: #1e293b; }
+</style></head><body>
+<h2>Documentation non disponible</h2>
+<p>Activez l'option "Documentation Markdown" lors du traitement pour générer la documentation.</p>
+</body></html>"""
+        return HTMLResponse(content=html)
+    
+    # Lire le contenu MD
+    md_content = read_file(str(doc_path))
+    
+    # Conversion simple MD -> HTML (basique mais suffisant)
+    html_content = convert_md_to_html(md_content, filename)
+    
+    return HTMLResponse(content=html_content)
+
+
+def convert_md_to_html(md_content: str, filename: str) -> str:
+    """Convertit le Markdown en HTML avec style."""
+    import re
+    
+    # Échapper les caractères HTML
+    def escape_html(text):
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    lines = md_content.split('\n')
+    html_lines = []
+    in_code_block = False
+    code_lang = ""
+    code_content = []
+    
+    for line in lines:
+        # Code blocks
+        if line.startswith('```'):
+            if in_code_block:
+                # Fin du bloc de code
+                html_lines.append(f'<pre><code class="language-{code_lang}">{escape_html(chr(10).join(code_content))}</code></pre>')
+                code_content = []
+                in_code_block = False
+            else:
+                # Début du bloc de code
+                code_lang = line[3:].strip() or "text"
+                in_code_block = True
+            continue
+        
+        if in_code_block:
+            code_content.append(line)
+            continue
+        
+        # Headers
+        if line.startswith('### '):
+            html_lines.append(f'<h3>{escape_html(line[4:])}</h3>')
+        elif line.startswith('## '):
+            html_lines.append(f'<h2>{escape_html(line[3:])}</h2>')
+        elif line.startswith('# '):
+            html_lines.append(f'<h1>{escape_html(line[2:])}</h1>')
+        # Lists
+        elif line.strip().startswith('- '):
+            html_lines.append(f'<li>{escape_html(line.strip()[2:])}</li>')
+        elif line.strip().startswith('* '):
+            html_lines.append(f'<li>{escape_html(line.strip()[2:])}</li>')
+        # Bold et code inline
+        elif line.strip():
+            processed = escape_html(line)
+            # **bold**
+            processed = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', processed)
+            # `code`
+            processed = re.sub(r'`([^`]+)`', r'<code>\1</code>', processed)
+            html_lines.append(f'<p>{processed}</p>')
+        else:
+            html_lines.append('<br>')
+    
+    body = '\n'.join(html_lines)
+    
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Documentation - {filename}</title>
+    <style>
+        body {{ 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 30px; 
+            background: #f8fafc; 
+            color: #1e293b;
+            line-height: 1.6;
+        }}
+        h1 {{ color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }}
+        h2 {{ color: #1e293b; margin-top: 30px; }}
+        h3 {{ color: #475569; }}
+        code {{ 
+            background: #f1f5f9; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+        }}
+        pre {{ 
+            background: #1e293b; 
+            color: #e2e8f0; 
+            padding: 16px; 
+            border-radius: 8px; 
+            overflow-x: auto;
+        }}
+        pre code {{ 
+            background: none; 
+            padding: 0; 
+            color: inherit;
+        }}
+        li {{ margin: 8px 0; }}
+        strong {{ color: #0f172a; }}
+        p {{ margin: 12px 0; }}
+    </style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
 
 
 @app.get("/api/download/{job_id}")

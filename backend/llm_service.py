@@ -7,9 +7,9 @@ import os
 import subprocess
 import httpx
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Charger .env depuis le dossier parent (racine du projet)
-from pathlib import Path
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
@@ -27,58 +27,53 @@ def is_api_configured() -> bool:
 def call_api(prompt: str) -> str:
     """Appelle l'API LLM externe (compatible OpenAI/OpenRouter)."""
     
-    # Headers de base
     headers = {
         "Authorization": f"Bearer {LLM_API_TOKEN}",
         "Content-Type": "application/json",
     }
     
-    # Headers spécifiques pour OpenRouter
     if "openrouter" in LLM_API_URL.lower():
         headers["HTTP-Referer"] = "http://localhost:8000"
         headers["X-Title"] = "AgentIA Code Standardizer"
     
+    # CORRECTION ICI : System Prompt neutre. 
+    # C'est le 'prompt' utilisateur qui contient les instructions spécifiques (Code ou Doc).
     payload = {
         "model": LLM_MODEL,
         "messages": [
             {
                 "role": "system", 
-                "content": "Tu es un expert Python. Tu ajoutes des docstrings Google-style claires et concises. Tu retournes UNIQUEMENT le code Python, sans texte avant ou après."
+                "content": "Tu es un assistant expert en programmation Python. Suis scrupuleusement les instructions de l'utilisateur."
             },
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.2,
+        "temperature": 0.2, # Faible pour être précis
         "max_tokens": 8192
     }
     
     try:
-        print(f"[LLM] Appel API: {LLM_API_URL}")
-        print(f"[LLM] Modèle: {LLM_MODEL}")
+        print(f"[LLM] Appel API: {LLM_MODEL}")
         
         with httpx.Client(timeout=180.0) as client:
             response = client.post(LLM_API_URL, json=payload, headers=headers)
             
-            # Debug
-            print(f"[LLM] Status: {response.status_code}")
-            
             if response.status_code != 200:
-                print(f"[LLM] Erreur: {response.text}")
-                raise RuntimeError(f"API Error {response.status_code}: {response.text}")
+                print(f"[LLM] Erreur Status: {response.status_code}")
+                # On évite de crash ici, on retourne l'erreur pour les logs
+                return f"Erreur API ({response.status_code}): {response.text}"
             
             data = response.json()
             
-            # Extraire la réponse
             if "choices" in data and len(data["choices"]) > 0:
                 content = data["choices"][0]["message"]["content"]
-                print(f"[LLM] Réponse reçue ({len(content)} chars)")
                 return content
             else:
-                raise RuntimeError(f"Format de réponse inattendu: {data}")
+                return f"Erreur format réponse: {data}"
                 
     except httpx.TimeoutException:
-        raise RuntimeError("Timeout: l'API n'a pas répondu dans les 180 secondes")
+        return "Erreur: Timeout API (180s)"
     except Exception as e:
-        raise RuntimeError(f"Erreur API LLM: {e}")
+        return f"Erreur Exception API: {e}"
 
 
 def call_ollama(prompt: str) -> str:
@@ -86,82 +81,53 @@ def call_ollama(prompt: str) -> str:
     try:
         print(f"[LLM] Appel Ollama local: {LLM_MODEL}")
         
-        # Essayer d'abord l'API REST d'Ollama (recommandé)
+        # 1. Tentative API REST (Plus rapide/stable)
         try:
             response = httpx.post(
                 "http://localhost:11434/api/generate",
                 json={
                     "model": LLM_MODEL,
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "system": "Tu es un assistant expert en Python." # System prompt neutre aussi
                 },
                 timeout=300.0
             )
-            response.raise_for_status()
-            data = response.json()
-            content = data.get("response", "").strip()
-            print(f"[LLM] Réponse reçue ({len(content)} chars)")
-            return content
-        except (httpx.RequestError, httpx.HTTPStatusError, httpx.ConnectError):
-            print("[LLM] API REST non disponible, tentative avec subprocess...")
+            if response.status_code == 200:
+                return response.json().get("response", "").strip()
+        except Exception:
+            pass # Fallback sur subprocess si l'API échoue
         
-        # Fallback: utiliser subprocess avec encodage explicite
+        # 2. Fallback Subprocess
         result = subprocess.run(
             ["ollama", "run", LLM_MODEL],
             input=prompt,
             text=True,
-            encoding='utf-8',  # Spécifier explicitement UTF-8
-            errors='replace',  # Gérer les erreurs d'encodage
+            encoding='utf-8',
+            errors='replace',
             capture_output=True,
-            check=True,
             timeout=300
         )
-        content = result.stdout.strip()
-        print(f"[LLM] Réponse reçue ({len(content)} chars)")
-        return content
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        raise RuntimeError(f"Erreur Ollama: {error_msg}")
-    except FileNotFoundError:
-        raise RuntimeError("Ollama n'est pas installé. Installez-le depuis https://ollama.com/")
-    except UnicodeDecodeError as e:
-        raise RuntimeError(f"Erreur d'encodage avec Ollama: {e}. Essayez de redémarrer Ollama.")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Timeout: Ollama n'a pas répondu dans les 5 minutes")
+        if result.returncode != 0:
+            return f"Erreur Ollama CLI: {result.stderr}"
+            
+        return result.stdout.strip()
+
     except Exception as e:
-        raise RuntimeError(f"Erreur inattendue avec Ollama: {e}")
+        return f"Erreur critique Ollama: {str(e)}"
 
 
 def generate(prompt: str) -> str:
-    """
-    Point d'entrée principal : utilise l'API si configurée, sinon Ollama.
-    
-    Args:
-        prompt: Le prompt à envoyer au LLM
-        
-    Returns:
-        La réponse du LLM
-    """
+    """Point d'entrée principal."""
     if is_api_configured():
-        print("[LLM] Mode: API externe")
         return call_api(prompt)
     else:
-        print("[LLM] Mode: Ollama local")
         return call_ollama(prompt)
 
 
 def get_backend_info() -> dict:
-    """Retourne les infos sur le backend LLM utilisé."""
+    """Retourne les infos sur le backend."""
     if is_api_configured():
-        # Masquer le token
-        masked_token = LLM_API_TOKEN[:10] + "..." if len(LLM_API_TOKEN) > 10 else "***"
-        return {
-            "backend": "api",
-            "url": LLM_API_URL,
-            "model": LLM_MODEL,
-            "token": masked_token
-        }
-    return {
-        "backend": "ollama",
-        "model": LLM_MODEL
-    }
+        masked = LLM_API_TOKEN[:6] + "..." if len(LLM_API_TOKEN) > 6 else "***"
+        return {"backend": "api", "model": LLM_MODEL, "token": masked}
+    return {"backend": "ollama", "model": LLM_MODEL}
