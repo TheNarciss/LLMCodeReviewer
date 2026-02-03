@@ -550,7 +550,29 @@ async function init() {
     
     el.modalClose.addEventListener('click', closeModal);
     $('.modal-backdrop').addEventListener('click', closeModal);
-    
+    let isSyncingLeft = false;
+    let isSyncingRight = false;
+
+    const leftPanel = el.codeOriginal;
+    const rightPanel = el.codeCorrected;
+
+    leftPanel.addEventListener('scroll', function() {
+        if (!isSyncingLeft) {
+            isSyncingRight = true;
+            rightPanel.scrollTop = this.scrollTop;
+            rightPanel.scrollLeft = this.scrollLeft;
+        }
+        isSyncingLeft = false;
+    });
+
+    rightPanel.addEventListener('scroll', function() {
+        if (!isSyncingRight) {
+            isSyncingLeft = true;
+            leftPanel.scrollTop = this.scrollTop;
+            leftPanel.scrollLeft = this.scrollLeft;
+        }
+        isSyncingRight = false;
+    });    
     updateNav(1);
 }
 

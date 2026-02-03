@@ -1,3 +1,8 @@
+"""
+Générateur de docstrings intelligent (AST).
+Force le format Google Style (Description, Args, Returns, Raises) et assure la fermeture des quotes.
+"""
+
 import ast
 import re
 import logging
@@ -53,12 +58,12 @@ def clean_file_content(file_path: str) -> bool:
             
             # On supprime les lignes concernées
             del source_lines[start:end]
-            # print(f"   🗑️  Docstring supprimée (Lignes {start+1}-{end})")
 
         # --- ÉTAPE 2 : Suppression des commentaires purs (# ...) ---
         cleaned_lines = []
         for line in source_lines:
             stripped = line.strip()
+            # Si la ligne commence par # (ignorer l'indentation), on la saute
             if stripped.startswith("#"):
                 continue
             cleaned_lines.append(line)
@@ -78,8 +83,8 @@ def clean_file_content(file_path: str) -> bool:
 def generate_single_docstring(source_code: str) -> str:
     """Demande au LLM de générer une docstring structurée."""
     
-    prompt = f"""Tu es un expert en documentation Python (PEP 257).
-Génère une docstring au format "Google Style" pour le code ci-dessous.
+    prompt = f"""Tu es un expert en documentation Python (PEP8).
+Génère une docstring au format PEP8pour le code ci-dessous.
 
 Structure OBLIGATOIRE :
 1. Description : Une phrase concise expliquant à quoi sert la fonction/classe.
@@ -88,8 +93,8 @@ Structure OBLIGATOIRE :
 4. Raises : (Si applicable) Liste des erreurs explicites levées.
 
 Exemple de format attendu :
-\"\"\"
-Calcule la racine carrée d'un nombre.
+
+Desc : Calcule la racine carrée d'un nombre.
 
 Args:
     x (float): Le nombre positif.
@@ -99,10 +104,9 @@ Returns:
 
 Raises:
     ValueError: Si x est négatif.
-\"\"\"
 
 Règles strictes :
-- Retourne UNIQUEMENT la docstring (entre triple guillemets).
+- Retourne UNIQUEMENT la docstring.
 - Pas de texte avant ou après (pas de "Voici la docstring").
 - Ne pas inventer d'arguments qui n'existent pas.
 
@@ -114,13 +118,18 @@ Code à documenter :
         if not response: return ""
 
         cleaned = response.strip()
-        # Nettoyage des balises markdown si le LLM en met
+        
+        # Nettoyage des balises markdown si le LLM en met (ex: ```python ... ```)
         if "```" in cleaned:
             cleaned = cleaned.replace("```python", "").replace("```", "")
         
         cleaned = cleaned.strip()
-        # Ajout des quotes si manquantes
+        
+        # --- SECURITÉ CRITIQUE : AJOUT DES QUOTES ---
+        # Si le LLM a oublié les triple quotes, on les ajoute artificiellement ici
         if not (cleaned.startswith('"""') or cleaned.startswith("'''")):
+            # On s'assure qu'on n'ajoute pas des quotes s'il y en a déjà une partie
+            cleaned = cleaned.strip('"').strip("'")
             cleaned = f'"""\n{cleaned}\n"""'
             
         return cleaned
@@ -174,15 +183,17 @@ def add_docstrings_smartly(file_path: str) -> bool:
             docstring = generate_single_docstring(func_source)
             
             if docstring:
-                # Calcul de l'indentation correcte
+                # Calcul de l'indentation correcte (alignement sur le 'def' ou 'class')
                 def_line = source_lines[node.lineno - 1]
                 indent_str = def_line[:len(def_line) - len(def_line.lstrip())]
                 doc_indent = indent_str + "    "
                 
-                # Formatage de chaque ligne de la docstring
-                formatted_lines = [f"{doc_indent}{line}\n" for line in docstring.split('\n')]
+                # Formatage de chaque ligne de la docstring avec l'indentation
+                formatted_lines = [f" ('#') {doc_indent}{line}\n" for line in docstring.split('\n')]
                 
                 # Insertion après la ligne de définition
+                # node.body[0].lineno est la première ligne du corps de la fonction
+                # On insère juste avant le corps
                 insert_pos = node.body[0].lineno - 1
                 
                 for line in reversed(formatted_lines):
