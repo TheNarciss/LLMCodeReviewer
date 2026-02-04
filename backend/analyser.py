@@ -1,11 +1,78 @@
 """
 Analyseur de code Python avance.
 Extrait toutes les metriques professionnelles pour le rapport.
+Supporte les docstrings classiques ET les docstrings commentées (# ...).
 """
 
 import ast
 import subprocess
 from pathlib import Path
+
+
+def extract_commented_docstring(source_lines: list, node) -> str:
+    """
+    Extrait une docstring commentée (lignes commençant par #) après une définition.
+    
+    Args:
+        source_lines: Liste des lignes du code source (0-indexed)
+        node: Noeud AST (FunctionDef, ClassDef, etc.)
+    
+    Returns:
+        Le contenu de la docstring commentée ou None
+    """
+    if not source_lines or not hasattr(node, 'lineno'):
+        return None
+    
+    # node.lineno est 1-indexed, source_lines est 0-indexed
+    # La ligne du def/class est source_lines[node.lineno - 1]
+    # On veut commencer à la ligne APRÈS, soit source_lines[node.lineno]
+    
+    start_idx = node.lineno  # 0-indexed: première ligne après def/class
+    
+    # Trouver où s'arrêter (première ligne de vrai code dans le corps)
+    if hasattr(node, 'body') and node.body:
+        # body[0].lineno est 1-indexed
+        end_idx = node.body[0].lineno - 1  # 0-indexed: ligne du premier code
+    else:
+        return None
+    
+    # Sécurité
+    if start_idx >= len(source_lines) or start_idx >= end_idx:
+        return None
+    
+    doc_lines = []
+    
+    for i in range(start_idx, min(end_idx + 15, len(source_lines))):
+        line = source_lines[i].strip() if i < len(source_lines) else ""
+        
+        # Si c'est un commentaire
+        if line.startswith('#'):
+            # Retirer le # et l'espace initial
+            content = line[1:].lstrip() if len(line) > 1 else ""
+            doc_lines.append(content)
+        # Ligne vide : on continue (peut y avoir des espaces entre commentaires)
+        elif not line:
+            if doc_lines:  # Seulement si on a déjà commencé à collecter
+                doc_lines.append("")
+        # Vrai code : on arrête
+        else:
+            break
+    
+    if doc_lines:
+        # Nettoyer : retirer les lignes vides au début/fin
+        while doc_lines and not doc_lines[0]:
+            doc_lines.pop(0)
+        while doc_lines and not doc_lines[-1]:
+            doc_lines.pop()
+        
+        # Retirer les """ si présents (car c'est un format commenté, pas une vraie docstring)
+        result = '\n'.join(doc_lines)
+        result = result.replace('"""', '').replace("'''", "").strip()
+        
+        if result:
+            return result
+    
+    return None
 
 
 def analyze_file(filepath: str) -> dict:
@@ -40,10 +107,10 @@ def analyze_file(filepath: str) -> dict:
             "style_issues": []
         }
     
-    # Extraire les informations
+    # Extraire les informations (avec les lignes sources pour détecter les docstrings commentées)
     imports = extract_imports(tree)
-    classes = extract_classes(tree)
-    functions = extract_functions(tree)
+    classes = extract_classes(tree, lines)
+    functions = extract_functions(tree, lines)
     variables = extract_global_variables(tree)
     constants = extract_constants(tree)
     
@@ -53,7 +120,7 @@ def analyze_file(filepath: str) -> dict:
     avg_complexity = total_complexity / len(all_funcs) if all_funcs else 0
     max_complexity = max((f.get("complexity", 1) for f in all_funcs), default=0)
     
-    # Docstring coverage
+    # Docstring coverage (inclut maintenant les docstrings commentées)
     documented_functions = sum(1 for f in functions if f.get("has_docstring"))
     documented_classes = sum(1 for c in classes if c.get("has_docstring"))
     total_documentable = len(functions) + len(classes)
@@ -127,8 +194,8 @@ def analyze_code_string(code: str) -> dict:
         }
     
     imports = extract_imports(tree)
-    classes = extract_classes(tree)
-    functions = extract_functions(tree)
+    classes = extract_classes(tree, lines)
+    functions = extract_functions(tree, lines)
     
     all_funcs = functions + [m for c in classes for m in c.get("methods", [])]
     total_complexity = sum(f.get("complexity", 1) for f in all_funcs) if all_funcs else 0
@@ -180,7 +247,7 @@ def extract_imports(tree):
     return imports
 
 
-def extract_classes(tree):
+def extract_classes(tree, source_lines: list = None):
     """Extrait les classes avec leurs details complets."""
     classes = []
     
@@ -213,8 +280,10 @@ def extract_classes(tree):
                     if item.returns:
                         return_type = ast.unparse(item.returns)
                     
-                    # Extraction de la docstring
+                    # Extraction de la docstring (classique OU commentée)
                     docstring = ast.get_docstring(item)
+                    if not docstring and source_lines:
+                        docstring = extract_commented_docstring(source_lines, item)
                     
                     # Extraction des appels internes
                     calls = []
@@ -257,7 +326,10 @@ def extract_classes(tree):
                             "type": attr_type
                         })
             
+            # Docstring de la classe (classique OU commentée)
             docstring = ast.get_docstring(node)
+            if not docstring and source_lines:
+                docstring = extract_commented_docstring(source_lines, node)
             
             classes.append({
                 "name": node.name,
@@ -275,7 +347,7 @@ def extract_classes(tree):
     return classes
 
 
-def extract_functions(tree):
+def extract_functions(tree, source_lines: list = None):
     """Extrait les fonctions (hors methodes de classe)."""
     functions = []
     class_methods = set()
@@ -300,7 +372,10 @@ def extract_functions(tree):
                 if node.returns:
                     return_type = ast.unparse(node.returns)
                 
+                # Docstring classique OU commentée
                 docstring = ast.get_docstring(node)
+                if not docstring and source_lines:
+                    docstring = extract_commented_docstring(source_lines, node)
                 
                 calls = []
                 for subnode in ast.walk(node):

@@ -84,7 +84,7 @@ def generate_single_docstring(source_code: str) -> str:
     """Demande au LLM de générer une docstring structurée."""
     
     prompt = f"""Tu es un expert en documentation Python (PEP8).
-Génère une docstring au format PEP8pour le code ci-dessous.
+Génère une docstring au format PEP8 pour le code ci-dessous.
 
 Structure OBLIGATOIRE :
 1. Description : Une phrase concise expliquant à quoi sert la fonction/classe.
@@ -189,7 +189,7 @@ def add_docstrings_smartly(file_path: str) -> bool:
                 doc_indent = indent_str + "    "
                 
                 # Formatage de chaque ligne de la docstring avec l'indentation
-                formatted_lines = [f" ('#') {doc_indent}{line}\n" for line in docstring.split('\n')]
+                formatted_lines = [f" # {doc_indent}{line}\n" for line in docstring.split('\n')]
                 
                 # Insertion après la ligne de définition
                 # node.body[0].lineno est la première ligne du corps de la fonction
